@@ -78,6 +78,17 @@ interpreter and in types; the rules every type-level file follows.
 with native `go run`, and the reference's op counts match an independent
 count (the stage 0 counter).
 
+**Result (2026-11-15): passed, except the op-count cross-check.**
+`vp run gate:ref --fuzz 100`: hand-written 23/23, `$GOROOT/test` 53/53
+(divmod in the `--slow` tier: passes, 4.64G ops), snapshot resume
+304/304, fuzz 100/100. The reference runs ~100M ops/s. The tsgo harness
+(IR v2, ~18k functions, 53 MB) on the reference prints the exact TS2322
+line for the mini one-liner in 1.35M ops, package init included, 0.47 s;
+the tsgo overlays keep native parity at 656/656. Not done yet: comparing
+op counts with the stage 0 SSA counter (the two pipelines lower
+differently), the es5 lib, and the other oracle inputs on the reference —
+all stage 3.
+
 ## Stage 3: TypeScript 7 on the reference (in `ts-in-types`)
 
 Harness `check(files, args) → output`; oracle of the 328 inputs (from

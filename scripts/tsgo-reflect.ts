@@ -8,7 +8,15 @@
 //   census -dir <tsgo> -overlay overlay/tsgo.json -tags purego \
 //     -from github.com/microsoft/typescript-go/cmd/tsgo.check
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -51,8 +59,25 @@ const bin = join(work, "tsgo-cover");
 const srcCopy = join(work, "src");
 mkdirSync(srcCopy, { recursive: true });
 const tsgo = tsgoDir();
-execFileSync("rsync", ["-a", "--exclude", "*_test.go", "--exclude", "testdata", "go.mod", "go.sum", "cmd", "internal", srcCopy + "/"], { cwd: tsgo });
-const ov: { Replace: Record<string, string> } = JSON.parse(readFileSync(join(repo, "overlay/tsgo.json"), "utf8"));
+execFileSync(
+  "rsync",
+  [
+    "-a",
+    "--exclude",
+    "*_test.go",
+    "--exclude",
+    "testdata",
+    "go.mod",
+    "go.sum",
+    "cmd",
+    "internal",
+    srcCopy + "/",
+  ],
+  { cwd: tsgo },
+);
+const ov: { Replace: Record<string, string> } = JSON.parse(
+  readFileSync(join(repo, "overlay/tsgo.json"), "utf8"),
+);
 const stdOnly: Record<string, string> = {};
 for (const [dst, from] of Object.entries(ov.Replace)) {
   if (dst.startsWith(tsgo + "/")) copyFileSync(from, join(srcCopy, dst.slice(tsgo.length + 1)));
@@ -130,17 +155,23 @@ function counts(dir: string): Map<string, number> {
   }
   return m;
 }
+// WriteCountersDir writes counter files only; the meta-data file is in cov.
+for (const f of readdirSync(cov))
+  if (f.startsWith("covmeta.")) copyFileSync(join(cov, f), join(before, f));
 const after = counts(cov);
 const pre = counts(before);
+if (pre.size === 0) throw new Error("no counters at check start: measurement broken");
 const byPkg: Record<string, Set<string>> = {};
 for (const [block, n] of after) {
   if (n - (pre.get(block) ?? 0) <= 0) continue;
   const file = block.slice(0, block.indexOf(":"));
   const dir = file.slice(0, file.lastIndexOf("/"));
-  const pkg = [...pkgs, control].find((p) => dir === p || dir.endsWith("/" + p) && p.includes("/")) ?? dir;
+  const pkg =
+    [...pkgs, control].find((p) => dir === p || (dir.endsWith("/" + p) && p.includes("/"))) ?? dir;
   (byPkg[pkg] ??= new Set()).add(block.slice(0, block.indexOf(",")));
 }
 console.log(`${runs} checks; coverage blocks of ${pkgs.join(", ")} that ran inside check:`);
 for (const p of pkgs) console.log(`  ${p}: ${byPkg[p]?.size ?? 0}`);
 console.log(`  (control) ${control}: ${byPkg[control]?.size ?? 0}`);
-for (const [p, bs] of Object.entries(byPkg)) if (p !== control) for (const b of [...bs].slice(0, 20)) console.log(`    ${p}: ${b}`);
+for (const [p, bs] of Object.entries(byPkg))
+  if (p !== control) for (const b of [...bs].slice(0, 20)) console.log(`    ${p}: ${b}`);

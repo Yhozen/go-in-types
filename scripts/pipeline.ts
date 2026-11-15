@@ -53,10 +53,14 @@ export async function frontend(file: string, outDir: string): Promise<string> {
   const out = join(outDir, basename(file).replace(/\.go$/, ".json"));
   try {
     if (existsSync(join(repo, "scripts/frontend.ts"))) {
-      await run("node", [join(repo, "scripts/frontend.ts"), file, "-o", out, "--config", "tests", "--", ...TAGS], {
-        cwd: repo,
-        maxBuffer: 64 << 20,
-      });
+      await run(
+        "node",
+        [join(repo, "scripts/frontend.ts"), file, "-o", out, "--config", "tests", "--", ...TAGS],
+        {
+          cwd: repo,
+          maxBuffer: 64 << 20,
+        },
+      );
     } else {
       const bin = await frontendBinary();
       await run(

@@ -50,4 +50,6 @@ func main() {
 	fmt.Printf("%08.3f|%x|%.0f|%.0f\n", -3.14159, 1.0, 0.5, 1.5)
 	fmt.Printf("%s %v\n", []byte("raw"), []byte("raw"))
 	fmt.Printf("%q\n", []string{"a b", "c"})
+	h := [16]byte{0xde, 0xad, 1}
+	fmt.Printf("%x %v %T\n", h, h, h)
 }

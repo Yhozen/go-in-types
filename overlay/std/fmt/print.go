@@ -660,6 +660,10 @@ type rvalue struct{}
 // %!verb(unsupported type).
 func (p *pp) printValue(arg any, verb rune, depth int) {
 	switch f := arg.(type) {
+	case [16]byte: // hashes (e.g. runtime/coverage file names)
+		p.fmtBytes(f[:], verb, "[16]uint8")
+	case [32]byte:
+		p.fmtBytes(f[:], verb, "[32]uint8")
 	case []string:
 		printSlice(p, f, verb, depth)
 	case []int:
@@ -815,6 +819,10 @@ func typeString(arg any) string {
 		return "string"
 	case []byte:
 		return "[]uint8"
+	case [16]byte:
+		return "[16]uint8"
+	case [32]byte:
+		return "[32]uint8"
 	case []string:
 		return "[]string"
 	case []int:

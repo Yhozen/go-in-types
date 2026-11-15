@@ -62,6 +62,21 @@
 //
 // Every multi-result op returns a tuple read by indexed access (`R["0"]`),
 // never by a pattern: `Append` gives `[Heap, Slice]`.
+//
+// The emitter supplies static facts: element slots `Es`, zero slots `Z` /
+// `Ze` (tuples of slot values, emitted once per type as top-level
+// aliases), element byte size and noscan for append, the equality kind for
+// `Eq`, field offsets. Index operands are signed ints; an unsigned index of
+// a narrower type is zero-extended first (`ZExt` in nat.ts).
+//
+// Costs (stock tsrs, instantiations, flat from 0 to 100k live objects;
+// scripts/cost-heap.ts): Load1 76, Store1 446, Alloc 377, pass-on 11, lazy
+// slot read 114 / write 644, append in place 934, makeSlice 487, copy of 4
+// slots 1511. Limits: the heap holds 16^W objects; a lazy object 16^6
+// slots; loops restart every 256 steps outside tail position (depth limit:
+// ~25k steps per op), but `LoadK`/`StoreK` build or consume a register
+// tuple and are quadratic past ~1000 slots: copy big arrays heap to heap
+// (`Copy`-style), not through registers.
 import type {
   Ch,
   E0,

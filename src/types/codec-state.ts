@@ -2,7 +2,7 @@
 // machine state the emitter's code runs on (docs/EMIT.md).
 import type { EntryInfo } from "../emit/emit.ts";
 import type { Program } from "../ir/types.ts";
-import type { Machine } from "../ref/interp.ts";
+import { ENTRY_DST, type Machine } from "../ref/interp.ts";
 import { restore, snapshot } from "../ref/snapshot.ts";
 import {
   decNat,
@@ -179,6 +179,8 @@ export interface StartOptions {
   entries?: EntryInfo[];
   /** give up after this many reference ops looking for a startable point */
   maxAdvance?: number;
+  /** encode heap slots that do not fit their types as dead (`snapshotToTypes` lenient) */
+  lenient?: boolean;
 }
 
 const DM_NONE = 0;
@@ -193,7 +195,7 @@ export function unstartable(m: Machine, ents: Entries): string | null {
   if (ents.at(top.d.id, top.pc) === undefined) return "top frame inside a block (no entry)";
   for (let i = 0; i < st.length; i++) {
     const f = st[i]!;
-    if (f.dst < -1) return "printing a panic";
+    if (f.dst < -1 && f.dst !== ENTRY_DST) return "printing a panic";
     if (f.defers?.some((d) => d.bpc >= 0)) return "builtin defer";
     if (i === st.length - 1) break;
     if (i === 0 && f.d.id === m.prog.main && f.pc === 0) continue; // main, not started
@@ -228,10 +230,9 @@ export function startState(prog: Program, snap0: any, o: StartOptions): StartSta
 export function stateModule(prog: Program, snap: any, ents: Entries, o: StartOptions): string {
   const lays = ents.lays;
   const ti = new TypeInfo(prog);
-  const heapMod = snapshotToTypes(prog, snap, `${o.rt}/heap.gen.d.ts`).heap.replace(
-    /^export type Heap/m,
-    "type Heap",
-  );
+  const heapMod = snapshotToTypes(prog, snap, `${o.rt}/heap.gen.d.ts`, {
+    lenient: o.lenient,
+  }).heap.replace(/^export type Heap/m, "type Heap");
   const n2 = (v: number) => strLit(encNat(v));
   const reg = (fr: any, r: number): string => {
     const v = fr.r[r];
@@ -264,7 +265,9 @@ export function stateModule(prog: Program, snap: any, ents: Entries, o: StartOpt
   // the bottom: "b" (end the run), and "m" (call main) above it while init
   // runs, as in the emitted start state (stack indices match the reference's)
   const mainWaits = frames.length > 1 && frames[0].fn === prog.main && frames[0].pc === 0;
-  let K = `R.Cons<R.Ct<"b", "", [], null, "0", "">, null>`;
+  // a run started by callEntry: its int result is the exit status ("e")
+  const bottom = frames[0].dst === ENTRY_DST ? "e" : "b";
+  let K = `R.Cons<R.Ct<"${bottom}", "", [], null, "0", "">, null>`;
   for (let i = 0; i < frames.length - 1; i++) {
     const fr = frames[i];
     if (i === 0 && mainWaits) {
@@ -408,7 +411,7 @@ export function decodeStart(
       const kd = str(kind!);
       const fn = Number(decNat(str(cfid!)));
       k = rest!;
-      if (kd === "b") continue;
+      if (kd === "b" || kd === "e") continue;
       if (kd === "m") {
         frames.push({ fn, pc: 0, dm: 0, regs: [], D: null });
         continue;

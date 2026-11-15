@@ -261,7 +261,7 @@ export function mapStateFromType(
  * integers (their type-level int) and bools as map.ts's Key*; pointers
  * `${id}.${slot}` or "nil"; structs and arrays slot by slot, each string
  * slot as `${Len}:${S}` (KeyStr) and every other slot as its form followed
- * by ",". Float and interface keys trap at the type level (DESIGN.md).
+ * by ","; floats as rt.ts KeyFloat (bits, -0 as 0; NaN keys fail).
  */
 export function snapKeyCanon(ti: TypeInfo, k: any, t: number): string {
   const one = (v: any, s: number): string => {
@@ -272,6 +272,18 @@ export function snapKeyCanon(ti: TypeInfo, k: any, t: number): string {
         return encNat(BigInt.asIntN(ti.width(s), typeof v === "object" ? BigInt(v.n) : BigInt(v)));
       case "bool":
         return canonKey.bool(v as boolean);
+      case "float": {
+        // rt.ts KeyFloat: the bits as an int, -0 as 0; a NaN key is unique
+        // per insert (n<seq>), which the key alone does not give
+        const w = ti.width(s);
+        const b = BigInt.asUintN(w, typeof v === "object" ? BigInt(v.n) : BigInt(v));
+        const exp = w === 64 ? (b >> 52n) & 0x7ffn : (b >> 23n) & 0xffn;
+        const man = w === 64 ? b & ((1n << 52n) - 1n) : b & ((1n << 23n) - 1n);
+        if (exp === (w === 64 ? 0x7ffn : 0xffn) && man !== 0n)
+          throw new Error("codec-map: NaN map keys are not supported by the codec");
+        if (b === 1n << BigInt(w - 1)) return "0";
+        return encNat(BigInt.asIntN(w, b));
+      }
       case "pointer":
       case "chan":
         return v === null ? "nil" : `${v.p < 0 ? "0".repeat(ID_WIDTH) : idOf(v.p)}.${encNat(v.i)}`;

@@ -70,6 +70,9 @@ import {
 /** The one object behind every zero-size allocation (Go's runtime.zerobase). */
 export const ZEROBASE: Obj = [];
 
+/** Frame.dst of a host entry call (Machine.bootEntry). */
+export const ENTRY_DST = -1000000;
+
 export const DM_NONE = 0;
 export const DM_RUN = 1;
 export const DM_PANIC = 2;
@@ -152,6 +155,7 @@ export class Machine {
   exitCode: number | null = null;
   curPanic: PanicRec | null = null;
   dying: { list: PanicRec[]; i: number } | null = null;
+  entryResult: any = undefined;
   args: string[];
 
   prog: Program;
@@ -178,6 +182,20 @@ export class Machine {
   /** Sets up the initial stack: init, then main. */
   boot(): void {
     if (this.prog.main !== null) this.pushFrame(this.prog.main, [], null, -1, false);
+    this.pushFrame(this.prog.init, [], null, -1, false);
+  }
+
+  /**
+   * Sets up init, then a call of function `fid` with host values `args`
+   * instead of main. Its result ends the run: an integer result is the
+   * exit status, anything else is kept in `entryResult`.
+   */
+  bootEntry(fid: number, args: any[]): void {
+    const d = this.dfunc(fid);
+    const regs = d.template.slice();
+    args.forEach((a, i) => (regs[i] = a));
+    const fr = new Frame(d, regs, ENTRY_DST, false);
+    this.stack.push(fr);
     this.pushFrame(this.prog.init, [], null, -1, false);
   }
 
@@ -221,7 +239,12 @@ export class Machine {
           this.exit(2, `trap: ${e.what} (in ${where})\n`);
         } else if (e instanceof RangeError && /call stack|Invalid array length/.test(e.message)) {
           this.exit(2, `fatal error: ${e.message}\n`);
-        } else throw e;
+        } else {
+          const t = this.top;
+          if (t && e instanceof Error)
+            e.message += ` (interpreter bug? in ${t.d.f.name}, pc ${t.pc - 1}: ${JSON.stringify(instrAt(t.d.f, t.pc - 1))})`;
+          throw e;
+        }
       }
     }
   }
@@ -356,7 +379,10 @@ export class Machine {
     this.brk = true;
     const dst = f.dst;
     if (dst >= 0) t!.regs[dst] = v;
-    else if (dst <= -2) this.dying!.list[-2 - dst]!.s = v;
+    else if (dst === ENTRY_DST) {
+      this.entryResult = v;
+      if (typeof v === "number") this.exitCode = v;
+    } else if (dst <= -2) this.dying!.list[-2 - dst]!.s = v;
   }
 
   // -------------------------------------------------------------- defer/panic
@@ -411,7 +437,7 @@ export class Machine {
     }
   }
 
-  private zeroResults(d: DFunc): any {
+  zeroResults(d: DFunc): any {
     const sig = this.prog.types[d.f.sig] as any;
     const rs: number[] = sig.results;
     if (rs.length === 0) return undefined;
@@ -527,6 +553,14 @@ export class Machine {
     });
     return { total: this.ops, byFunc, byKind };
   }
+}
+
+function instrAt(f: IRFunc, pc: number): Instr | undefined {
+  for (const b of f.blocks) {
+    if (pc < b.instrs.length) return b.instrs[pc];
+    pc -= b.instrs.length;
+  }
+  return undefined;
 }
 
 function sameEface(a: any, b: any): boolean {

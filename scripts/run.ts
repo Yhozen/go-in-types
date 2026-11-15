@@ -6,11 +6,30 @@
 // strings), plus { byFunc, byKind } op counts with --ops. --pause (alias of
 // --pause-at) stops after N total ops and writes the snapshot; the printed
 // result then has "paused": true.
+//   --check "ARGS"  instead of main, call the tsgo harness's
+//                   `check(files map[string]string, args []string) int`
+//                   (overlay/tsgo/cmd/tsgo/main.go) with the space-separated
+//                   ARGS; each *.ts argument is read from disk as /p/<base>.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import type { Program } from "../src/ir/types.ts";
 import { Machine } from "../src/ref/interp.ts";
 import { restore, snapshot } from "../src/ref/snapshot.ts";
+import { GoMap } from "../src/ref/gomap.ts";
+import { Slice, utf8Bytes } from "../src/ref/values.ts";
+
+function bootCheck(m: Machine, args: string[]) {
+  const fid = m.prog.funcs.findIndex((f) => f.name.endsWith("/cmd/tsgo.check"));
+  if (fid < 0) throw new Error("no cmd/tsgo.check in the program");
+  const sig = m.prog.types[m.prog.funcs[fid]!.sig] as any;
+  const [mapT] = sig.params as number[];
+  const files = new GoMap(mapT!, m.types.key((m.types.info[mapT!]!.u as any).key));
+  for (const a of args)
+    if (!a.startsWith("-") && a.endsWith(".ts"))
+      files.set(utf8Bytes("/p/" + basename(a)), readFileSync(a, "latin1"));
+  const as = args.map(utf8Bytes);
+  m.bootEntry(fid, [files, new Slice(as, 0, as.length, as.length)]);
+}
 
 const argv = process.argv.slice(2);
 const flag = (k: string) => argv.includes(k);
@@ -25,7 +44,8 @@ const json = flag("--json");
 const resumeFile = opt("--resume");
 const pauseAt = opt("--pause-at", "--pause");
 const snapFile = opt("--snapshot");
-const valued = new Set(["--resume", "--pause-at", "--pause", "--snapshot", "--args"]);
+const valued = new Set(["--resume", "--pause-at", "--pause", "--snapshot", "--check"]);
+const checkArgs = opt("--check");
 const progFile = argv.find((a, i) => !a.startsWith("--") && !valued.has(argv[i - 1] ?? ""));
 
 const progCache = new Map<string, Program>();
@@ -52,7 +72,8 @@ if (resumeFile) {
   }
   progPath = resolve(progFile);
   m = new Machine(loadProg(progPath));
-  m.boot();
+  if (checkArgs !== undefined) bootCheck(m, checkArgs.split(/\s+/).filter(Boolean));
+  else m.boot();
 }
 const state = m.run(pauseAt !== undefined ? Number(pauseAt) : Infinity);
 const secs = (performance.now() - t0) / 1000;

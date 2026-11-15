@@ -144,7 +144,8 @@ export const intrinsics: Record<string, Intrinsic> = {
     m.write(Number(fd), bytes(b));
   },
   "gointypes/rt.Exit": exit,
-  noop,
+  /** Package initializers: no-op (zero results for any other signature). */
+  noop: (m, _a, d) => m.zeroResults(d),
 };
 
 function nilPtr() {

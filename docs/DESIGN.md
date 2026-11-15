@@ -115,7 +115,9 @@ Rules:
 - `panic`/`defer`/`recover` follow Go (deferred calls run on panic and
   return; `recover` in a deferred call stops the panic). An unrecovered
   panic ends the run with `panic: <message>` (Go's format for the common
-  value kinds) and exit status 2.
+  value kinds) and exit status 2. `panic(nil)` panics with a
+  `*runtime.PanicNilError` (Go 1.21+; always in the program), which
+  `recover` returns.
 - `defer` in a range-over-func body targets the enclosing function's
   frame (go/ssa's `ssa:deferstack`). The front end keeps an
   `ssa:deferstack()` call only when a closure uses it, lowered to

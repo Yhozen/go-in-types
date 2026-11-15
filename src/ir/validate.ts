@@ -215,9 +215,12 @@ export function validate(p: unknown): string[] {
         one();
         break;
       case "interface":
-        keys(w, t, ["k", "methods", "slots"]);
+        keys(w, t, ["k", "methods", "sigs", "slots"]);
         if (!Array.isArray(t.methods) || !t.methods.every((m) => typeof m === "string"))
           err(w, "bad methods");
+        tids("sigs");
+        if (Array.isArray(t.sigs) && Array.isArray(t.methods) && t.sigs.length !== t.methods.length)
+          err(w, "sigs and methods differ in length");
         one();
         break;
       case "tuple":

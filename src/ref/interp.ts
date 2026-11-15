@@ -569,6 +569,12 @@ class Ctx {
     return -1;
   }
 
+  /** Underlying type of an operand (a global's address is a pointer). */
+  under(o: Operand): any {
+    if ("g" in o) return { k: "pointer", elem: this.m.prog.globals[o.g]!.type };
+    return this.types.info[this.t(o)]!.u;
+  }
+
   /** Elem type of a pointer-typed operand. */
   ptrElem(o: Operand): number {
     if ("g" in o) return this.m.prog.globals[o.g]!.type;
@@ -698,7 +704,7 @@ class Ctx {
         };
       }
       case "indexAddr": {
-        const xt = T.info[this.t(ins.x)]!.u;
+        const xt = this.under(ins.x);
         const x = this.r(ins.x);
         const ix = this.r(ins.index);
         const dst = ins.dst;
@@ -713,7 +719,7 @@ class Ctx {
           };
         }
         if (xt.k !== "pointer") throw new Error("indexAddr on " + xt.k);
-        const at = T.info[xt.elem]!.u as any;
+        const at = T.info[this.ptrElem(ins.x)]!.u as any;
         const es = T.info[at.elem]!.slots;
         const len = at.len as number;
         return (f) => {
@@ -753,8 +759,9 @@ class Ctx {
         };
       }
       case "binop": {
-        let ot = this.t(ins.x);
-        if (ot < 0 || (("c" in ins.x || "zero" in ins.x) && "r" in ins.y)) {
+        const cmp = /[=<>!]/.test(ins.kind) && ins.kind !== "<<" && ins.kind !== ">>";
+        let ot = cmp ? this.t(ins.x) : ins.t;
+        if (cmp && (ot < 0 || (("c" in ins.x || "zero" in ins.x) && "r" in ins.y))) {
           const yt = this.t(ins.y);
           if (yt >= 0) ot = yt;
         }
@@ -1192,7 +1199,7 @@ class Ctx {
 
   sliceOp(ins: Extract<Instr, { op: "slice" }>): Code {
     const T = this.types;
-    const xu = T.info[this.t(ins.x)]!.u;
+    const xu = this.under(ins.x);
     const x = this.r(ins.x);
     const lo = ins.low ? this.r(ins.low) : -1;
     const hi = ins.high ? this.r(ins.high) : -1;
@@ -1215,7 +1222,7 @@ class Ctx {
     let alen = 0;
     if (xu.k === "slice") es = T.info[xu.elem]!.slots;
     else if (xu.k === "pointer") {
-      const at = T.info[xu.elem]!.u as any;
+      const at = T.info[this.ptrElem(ins.x)]!.u as any;
       es = T.info[at.elem]!.slots;
       isArr = true;
       alen = at.len;

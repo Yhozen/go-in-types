@@ -103,7 +103,9 @@ type TFunc struct {
 type TInterface struct {
 	K       string   `json:"k"`
 	Methods []string `json:"methods"`
-	Slots   int      `json:"slots"`
+	// Sigs: the signature (k: "func", no receiver) of each method.
+	Sigs  []int `json:"sigs"`
+	Slots int   `json:"slots"`
 }
 type TTuple struct {
 	K     string `json:"k"`

@@ -399,9 +399,26 @@ export class Types {
 
   /** Whether dynamic type t implements interface type iface; returns missing method or null. */
   missing(t: number, iface: number): string | null {
-    const ms = (this.info[iface]!.u as any).methods as string[];
+    const it = this.info[iface]!.u as any;
+    const ms = it.methods as string[];
+    const sigs = it.sigs as number[] | undefined;
     const tab = this.methods(t);
-    for (const m of ms) if (!(m in tab)) return m;
+    const T = this.prog.types;
+    for (let i = 0; i < ms.length; i++) {
+      const fid = tab[ms[i]!];
+      if (fid === undefined) return ms[i]!;
+      if (!sigs) continue;
+      const want = T[sigs[i]!] as any;
+      const have = T[this.prog.funcs[fid]!.sig] as any;
+      if (
+        have.variadic !== want.variadic ||
+        have.params.length !== want.params.length + 1 ||
+        have.results.length !== want.results.length ||
+        want.params.some((p: number, j: number) => have.params[j + 1] !== p) ||
+        want.results.some((p: number, j: number) => have.results[j] !== p)
+      )
+        return ms[i]!;
+    }
     return null;
   }
 

@@ -294,13 +294,16 @@ func run(patterns []string) (*Program, *frontend) {
 	for _, f := range sorted {
 		fe.funcID(f)
 	}
-	// The runtime error type the reference uses for runtime panics.
+	// The runtime error types the reference uses for runtime panics
+	// (errorString: "runtime error: " prefix; plainError: none).
 	if rp := sp.ImportedPackage("runtime"); rp != nil {
-		if tn, ok := rp.Pkg.Scope().Lookup("errorString").(*types.TypeName); ok {
-			fe.tt.id(tn.Type())
-			ms := sp.MethodSets.MethodSet(tn.Type())
-			for i := 0; i < ms.Len(); i++ {
-				fe.funcID(sp.MethodValue(ms.At(i)))
+		for _, name := range []string{"errorString", "plainError"} {
+			if tn, ok := rp.Pkg.Scope().Lookup(name).(*types.TypeName); ok {
+				fe.tt.id(tn.Type())
+				ms := sp.MethodSets.MethodSet(tn.Type())
+				for i := 0; i < ms.Len(); i++ {
+					fe.funcID(sp.MethodValue(ms.At(i)))
+				}
 			}
 		}
 	}

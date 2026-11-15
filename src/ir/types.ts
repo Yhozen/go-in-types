@@ -67,7 +67,8 @@ export type Type =
   | { k: "map"; key: TypeId; elem: TypeId; slots: 1 }
   | { k: "chan"; elem: TypeId; slots: 1 }
   | { k: "func"; params: TypeId[]; results: TypeId[]; variadic: boolean; slots: 1 }
-  | { k: "interface"; methods: string[]; slots: 1 }
+  /** `sigs[i]`: signature (k: "func", no receiver) of `methods[i]`; dynamic types implement an interface only if names and signatures match. */
+  | { k: "interface"; methods: string[]; sigs: TypeId[]; slots: 1 }
   /** Multiple results of a call; never stored in memory. */
   | { k: "tuple"; elems: TypeId[]; slots: number }
   /** unsafe.Pointer and complex types: values exist only to be trapped on. */

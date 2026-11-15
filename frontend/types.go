@@ -131,10 +131,16 @@ func (tt *typeTable) build(t types.Type, id int) any {
 		return tt.sig(t, nil)
 	case *types.Interface:
 		ms := make([]string, t.NumMethods())
+		sigs := make([]int, t.NumMethods())
 		for i := range ms {
 			ms[i] = methodKey(t.Method(i))
 		}
-		return TInterface{K: "interface", Methods: ms, Slots: 1}
+		// Built after the methods: tt.id may append to tt.list.
+		res := TInterface{K: "interface", Methods: ms, Sigs: sigs, Slots: 1}
+		for i := range sigs {
+			sigs[i] = tt.id(t.Method(i).Type())
+		}
+		return res
 	case *types.Tuple:
 		es := make([]int, t.Len())
 		for i := range es {

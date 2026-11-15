@@ -1,5 +1,7 @@
 // go-in-types overlay of internal/core/core.go (typescript-go v7.0.2):
-// ApplyDebugStackLimit removed (it was the only use of os and runtime/debug).
+// ApplyDebugStackLimit removed (it was the only use of os and runtime/debug);
+// levenshteinWithMax on float bit patterns with memoised arithmetic (fewer
+// soft-float calls on the engine, identical results).
 package core
 
 import (
@@ -589,15 +591,100 @@ func GetSpellingSuggestionForStrings(name string, candidates iter.Seq[string]) s
 	return GetSpellingSuggestion(name, candidates, Identity, strings.Compare)
 }
 
+// go-in-types overlay: levenshteinWithMax without soft float in the inner
+// loop. The distances are float64 sums of 0.1, 1 and 2 (exact float
+// results matter: the comparisons with maxValue and the best distance see
+// their rounding), so the code below computes exactly the same float64
+// values, but as their bit patterns: every value is a non-negative finite
+// float other than -0 (sums of non-negative numbers starting from +0 and
+// maxValue > 0), and for those the bit patterns as uint64 order exactly as
+// the floats do, so math.Min and the comparisons become integer ones. The
+// three additions, the int conversions and the per-row Ceil/Floor bounds
+// are memoised: each result is computed once with real float arithmetic
+// (soft float on the engine) and then looked up, so values stay bit for bit
+// those of the original.
 type levenshteinBuffers struct {
-	previous []float64
-	current  []float64
+	previous []uint64
+	current  []uint64
 }
 
 var levenshteinBuffersPool = sync.Pool{
 	New: func() any {
 		return &levenshteinBuffers{}
 	},
+}
+
+// Addends of levAdd.
+const (
+	levAddTenth = iota // + 0.1
+	levAddOne          // + 1
+	levAddTwo          // + 2
+	levAddBig          // + 0.01
+)
+
+type levAddKey struct {
+	v uint64
+	c uint8
+}
+
+var levAddMemo map[levAddKey]uint64
+
+// levAdd is Float64bits(Float64frombits(v) + addend c), memoised.
+func levAdd(v uint64, c uint8) uint64 {
+	k := levAddKey{v, c}
+	if r, ok := levAddMemo[k]; ok {
+		return r
+	}
+	if levAddMemo == nil {
+		levAddMemo = map[levAddKey]uint64{}
+	}
+	var d float64
+	switch c {
+	case levAddTenth:
+		d = 0.1
+	case levAddOne:
+		d = 1
+	case levAddTwo:
+		d = 2
+	default:
+		d = 0.01
+	}
+	r := math.Float64bits(math.Float64frombits(v) + d)
+	levAddMemo[k] = r
+	return r
+}
+
+var levIntMemo []uint64
+
+// levInt is Float64bits(float64(i)) for i >= 0, memoised.
+func levInt(i int) uint64 {
+	for len(levIntMemo) <= i {
+		levIntMemo = append(levIntMemo, math.Float64bits(float64(len(levIntMemo))))
+	}
+	return levIntMemo[i]
+}
+
+type levBoundsKey struct {
+	i int
+	m uint64
+}
+
+var levBoundsMemo map[levBoundsKey][2]int
+
+// levBounds is int(math.Ceil(float64(i)-maxValue)) and
+// int(math.Floor(maxValue+float64(i))) for maxValue's bits m, memoised.
+func levBounds(i int, m uint64) (int, int) {
+	k := levBoundsKey{i, m}
+	if r, ok := levBoundsMemo[k]; ok {
+		return r[0], r[1]
+	}
+	if levBoundsMemo == nil {
+		levBoundsMemo = map[levBoundsKey][2]int{}
+	}
+	maxValue := math.Float64frombits(m)
+	r := [2]int{int(math.Ceil(float64(i) - maxValue)), int(math.Floor(maxValue + float64(i)))}
+	levBoundsMemo[k] = r
+	return r[0], r[1]
 }
 
 func levenshteinWithMax(buffers *levenshteinBuffers, s1 []rune, s2 []rune, maxValue float64) float64 {
@@ -608,48 +695,53 @@ func levenshteinWithMax(buffers *levenshteinBuffers, s1 []rune, s2 []rune, maxVa
 	previous := buffers.previous
 	current := buffers.current
 
-	big := maxValue + 0.01
+	maxBits := math.Float64bits(maxValue)
+	big := levAdd(maxBits, levAddBig)
 	for i := range previous {
-		previous[i] = float64(i)
+		previous[i] = levInt(i)
 	}
 	for i := 1; i <= len(s1); i++ {
 		c1 := s1[i-1]
-		minJ := max(int(math.Ceil(float64(i)-maxValue)), 1)
-		maxJ := min(int(math.Floor(maxValue+float64(i))), len(s2))
-		colMin := float64(i)
+		lower1 := unicode.ToLower(c1)
+		lo, hi := levBounds(i, maxBits)
+		minJ := max(lo, 1)
+		maxJ := min(hi, len(s2))
+		colMin := levInt(i)
 		current[0] = colMin
 		for j := 1; j < minJ; j++ {
 			current[j] = big
 		}
 		for j := minJ; j <= maxJ; j++ {
-			var substitutionDistance, dist float64
-			if unicode.ToLower(s1[i-1]) == unicode.ToLower(s2[j-1]) {
-				substitutionDistance = previous[j-1] + 0.1
-			} else {
-				substitutionDistance = previous[j-1] + 2
-			}
-			if c1 == s2[j-1] {
+			var dist uint64
+			c2 := s2[j-1]
+			if c1 == c2 {
 				dist = previous[j-1]
 			} else {
-				dist = math.Min(previous[j]+1, math.Min(current[j-1]+1, substitutionDistance))
+				var substitutionDistance uint64
+				if lower1 == unicode.ToLower(c2) {
+					substitutionDistance = levAdd(previous[j-1], levAddTenth)
+				} else {
+					substitutionDistance = levAdd(previous[j-1], levAddTwo)
+				}
+				dist = min(levAdd(previous[j], levAddOne), min(levAdd(current[j-1], levAddOne), substitutionDistance))
 			}
 			current[j] = dist
-			colMin = math.Min(colMin, dist)
+			colMin = min(colMin, dist)
 		}
 		for j := maxJ + 1; j <= len(s2); j++ {
 			current[j] = big
 		}
-		if colMin > maxValue {
+		if colMin > maxBits {
 			// Give up -- everything in this column is > max and it can't get better in future columns.
 			return -1
 		}
 		previous, current = current, previous
 	}
 	res := previous[len(s2)]
-	if res > maxValue {
+	if res > maxBits {
 		return -1
 	}
-	return res
+	return math.Float64frombits(res)
 }
 
 func Identity[T any](t T) T {

@@ -34,7 +34,7 @@ export interface EmitStats {
 
 const D_REG = -1;
 const UNIT = 1000; // estimated instantiations per fuel unit
-const MAX_W = 600;
+const MAX_W = 880;
 /** Estimated instantiations and segments per fuel group (a group starts with a fuel check). */
 const GROUP_COST = 40000;
 const GROUP_SEGS = 40;
@@ -664,6 +664,29 @@ class SegB {
     );
   }
 
+  /**
+   * Extra weight of ops that build or walk aggregate values: about
+   * n (40 + 4 n) for n slots (heap.ts LoadK grows its tuple one slot at a
+   * time; a 1000-slot load costs ~4M instantiations).
+   */
+  aggCost(ins: Instr): number {
+    const sl = (t: number) => (t >= 0 && this.e.info(t).agg ? this.e.info(t).slots : 0);
+    const w = (n: number) => n * (40 + 4 * n);
+    switch (ins.op) {
+      case "load":
+      case "lookup":
+        return w(sl(this.fe.f.regTypes[ins.dst]!));
+      case "store":
+        return w(sl(this.typeOf(ins.val)));
+      case "mapUpdate":
+        return w(sl(this.typeOf(ins.val))) + w(sl(this.typeOf(ins.key)));
+      case "makeInterface":
+        return w(sl(this.typeOf(ins.x)));
+      default:
+        return 0;
+    }
+  }
+
   isChacha(ins: Instr): boolean {
     if (ins.op !== "call" || !("static" in ins.callee)) return false;
     const g = this.e.prog.funcs[ins.callee.static]!;
@@ -958,7 +981,7 @@ class SegB {
   instr(ins: Instr, b: Block, bi: number): void {
     const e = this.e;
     const T = e.T;
-    this.gCost += opCost(ins) + (this.isChacha(ins) ? CHACHA_COST : 0);
+    this.gCost += opCost(ins) + (this.isChacha(ins) ? CHACHA_COST : 0) + this.aggCost(ins);
     if (
       this.binds >= 2 ||
       this.heapNest >= MAX_HEAP_NEST ||
@@ -1396,10 +1419,13 @@ class SegB {
       return this.setReg(ins.dst, `I.Conv<"${fw}", "${tw}", ${x}>`);
     }
     if (fi.ik && ti.k === "string") {
-      const x = this.atom(ins.x);
       const fw = e.kindW(from);
-      // 64-bit values beyond the rune range: RuneStr handles any int
-      void fw;
+      // unsigned narrow values are zero-extended first (uint8(200) is 200,
+      // not the sign-extended -56); RuneStr handles any int
+      const x =
+        fw[0] === "u" && fw !== "u64"
+          ? this.atomV(`I.ZExt<"${fw}", ${this.atom(ins.x)}>`)
+          : this.atom(ins.x);
       return this.setReg(ins.dst, `Sr.RuneStr<${x}>`);
     }
     if (fi.k === "string" && ti.k === "slice") {

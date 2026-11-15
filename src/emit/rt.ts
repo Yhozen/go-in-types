@@ -77,8 +77,18 @@ export interface ProgB {
  * `o` reads its arguments from `this`).
  */
 type Ent<E, Key, H, K, X, F, A> = Key extends keyof E
-  ? (E[Key] & { h: H; k: K; x: X; f: F; a: A; o: unknown })["o"]
+  ? (E[Key] & EA<H, K, X, F, A>)["o"]
   : St<"x", "", H, K, XErr<X, `fatal error: no entry ${Key & string}\n`>, 2, "">;
+
+/** An entry's arguments (intersected with the entry interface). */
+interface EA<H, K, X, F, A> {
+  h: H;
+  k: K;
+  x: X;
+  f: F;
+  a: A;
+  o: unknown;
+}
 
 /** One chunk: refuel S and run trampoline steps until the fuel is spent or the run is over. */
 export type Chunk<P extends ProgB, S> =

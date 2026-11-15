@@ -176,14 +176,14 @@ Rules:
 Code lives in `src/types/` (type-level `.ts` modules, generated tables as
 `*.gen.ts`); tests in `tests/types/`.
 
-| Go | type-level value |
-|---|---|
-| bool | `true` / `false` |
-| every integer width, signed or unsigned | lua-in-types' int64 nibble string (lowercase hex, least significant nibble first, shortest two's complement that sign-extends; `0`→`"0"`, `-1`→`"f"`, `8`→`"80"`) of the value's **w-bit pattern sign-extended to 64 bits**. So uint8 255 is `"f"`, uint64 max is `"f"`, int16 -2 is `"e"`. Every value of every width has one canonical form; signedness and width live in the op, which the emitter picks from the IR type. |
-| float32/64 | the bit pattern as the matching unsigned integer (above) |
-| string | a string literal of bytes (chars 0..255), indexed with a `Chars`-style trie for long strings |
-| nil (any kind) | `null` |
-| pointer, slice, map, chan, func, interface, struct/array | defined by the heap module (`src/types/heap.ts`), documented in its header and in this section by stage 4 |
+| Go                                                       | type-level value                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| bool                                                     | `true` / `false`                                                                                                                                                                                                                                                                                                                                                                                                              |
+| every integer width, signed or unsigned                  | lua-in-types' int64 nibble string (lowercase hex, least significant nibble first, shortest two's complement that sign-extends; `0`→`"0"`, `-1`→`"f"`, `8`→`"80"`) of the value's **w-bit pattern sign-extended to 64 bits**. So uint8 255 is `"f"`, uint64 max is `"f"`, int16 -2 is `"e"`. Every value of every width has one canonical form; signedness and width live in the op, which the emitter picks from the IR type. |
+| float32/64                                               | the bit pattern as the matching unsigned integer (above)                                                                                                                                                                                                                                                                                                                                                                      |
+| string                                                   | a string literal of bytes (chars 0..255), indexed with a `Chars`-style trie for long strings                                                                                                                                                                                                                                                                                                                                  |
+| nil (any kind)                                           | `null`                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| pointer, slice, map, chan, func, interface, struct/array | pointer `[Id, Slot]`; slice `[Id, Off, Len, Cap]`; interface `[T, V]`; func `[F, Env]`; struct/array in registers: tuple of slots; map: an object on the heap (`map.ts`); ids, objects, globals, panics: "Heap encodings" below and `src/types/heap.ts`                                                                                                                                                                       |
 
 Start from lua-in-types (`../lua-in-types/src/aot/types/`: `int64.ts`,
 `int64-tables.ts`, `str.ts`, `lstr.ts`, `hash.ts`, `trie.ts`): copy and
@@ -192,6 +192,36 @@ the reference interpreter's own functions (`src/ref/values.ts` etc.) and,
 if it touches the heap, the H5 cost test at 0, 1k, 10k, 100k live objects.
 Run tsrs benchmarks and gates through `scripts/heavy.sh` (two machine-wide
 slots).
+
+#### Heap encodings (stage4-heap)
+
+- Heap `[Next, Root]` (`HeapMk`): Root is a 16-wide tuple trie of depth W
+  (`IdWidth`, 5 = ~1M objects; wider is `scripts/gen-heap.ts --width`).
+  Only ever an alias argument (H2).
+- Object id: W lowercase hex digits, most significant first. `"00000"` is
+  the zero-size object (runtime.zerobase). Globals are allocated first, in
+  `Program.globals` order: global g gets id 1 + (non-zero-size globals
+  before it), or `"00000"` if zero-size; its address is `[id, "0"]`. Ids
+  convert to ints (map keys) by reversing the digits (`IdInt`).
+- Objects: **flat** (static size ≤16 slots) = 16-tuple of the slots, padded
+  with `undefined`; **lazy** (>16 slots, every slice backing array) =
+  19-tuple `[c0..c15, D, N, Z]`: depth, slot count (int), zero pattern
+  (slot s's zero is `Z[s mod len(Z)]`); slot s at its D hex digits, most
+  significant first; unwritten slots are `undefined` and read as the zero
+  value the reader passes (memory is typed), so allocation costs O(depth)
+  at any size, and growing a slice backed by a whole lazy object reuses
+  its tree.
+- Slot indices, offsets, lengths, capacities: ints (nibble strings). Type
+  and function ids in interface and func values: the IR index as an int.
+- Closures: the environment is a value tuple, not an object (closures are
+  immutable), so `makeClosure` does not allocate.
+- Panics from heap primitives: `Panic<K, M>` (K `"e"` runtime.errorString,
+  `"p"` runtime.plainError; M message parts: string literals and `[int]`
+  for the caller to print in decimal). Checks that can panic are separate
+  aliases returning `true` or a Panic, so heap-returning ops never panic.
+- Per-program tables (H1, non-generic interfaces passed as `P`): `impl`
+  (`"T:I"` keys), `names` (Go type strings), `missing` (first missing
+  method), `eqk` (equality kind per type or `"unc"`).
 
 ## Testing and gates (stage 2)
 

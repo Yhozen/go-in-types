@@ -89,7 +89,15 @@ func bootQuiet(files map[string]string, args []string) (int, []byte) {
 	fs := &memoFS{FS: sys.fs, fileExists: map[string]bool{}, dirExists: map[string]bool{}}
 	sys.fs = fs
 	warm = &warmState{files: files, commandLine: tsoptions.ParseCommandLine(args, sys), sources: map[string]*ast.SourceFile{}, fs: fs}
-	return run(sys, warm.commandLine, warm), sys.out.Bytes()
+	status := run(sys, warm.commandLine, warm)
+	// Keep only the paths in the image: later checks ask the boot FS only
+	// path queries, whose answers don't depend on the contents.
+	paths := make(map[string]string, len(files))
+	for k := range files {
+		paths[k] = ""
+	}
+	fs.FS = vfstest.FromMapWithClock(paths, true, fixedClock{})
+	return status, sys.out.Bytes()
 }
 
 func checkWarm(main string) int {

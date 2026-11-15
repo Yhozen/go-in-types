@@ -33,7 +33,8 @@ function fields(core: string): FieldInfo[] {
 /** Go expression: is field f of x non-zero (reflect.Value.IsZero negated)? */
 function nonZero(x: string, f: FieldInfo, pkg: string): string {
   const t = f.type;
-  if (t.startsWith("*") || t.startsWith("[]") || t.startsWith("map[")) return `${x}.${f.name} != nil`;
+  if (t.startsWith("*") || t.startsWith("[]") || t.startsWith("map["))
+    return `${x}.${f.name} != nil`;
   if (t === "string") return `${x}.${f.name} != ""`;
   if (t === "bool") return `${x}.${f.name}`;
   // Named integer types of package core (Tristate, ModuleKind, ...).
@@ -67,7 +68,10 @@ let core = replaceBetween(
 core = core.replace('\t"reflect"\n', "");
 // The doc comment of Clone sat between the var and the func; keep the file tidy.
 mkdirSync(join(here, "tsgo/internal/core"), { recursive: true });
-writeFileSync(join(here, "tsgo/internal/core/compileroptions.go"), header("internal/core/compileroptions.go") + core);
+writeFileSync(
+  join(here, "tsgo/internal/core/compileroptions.go"),
+  header("internal/core/compileroptions.go") + core,
+);
 
 // tsoptions.mergeCompilerOptions: explicit nulls zero a field, else copy non-zero fields.
 const phFile = readFileSync(join(src, "internal/tsoptions/parsinghelpers.go"), "utf8");
@@ -86,6 +90,10 @@ let ph = replaceBetween(
     .join("") + "\n\treturn targetOptions\n}\n",
 );
 if (!/\breflect\./.test(ph)) ph = ph.replace('\t"reflect"\n', "");
+if (!/\bstrings\./.test(ph)) ph = ph.replace('\t"strings"\n', "");
 mkdirSync(join(here, "tsgo/internal/tsoptions"), { recursive: true });
-writeFileSync(join(here, "tsgo/internal/tsoptions/parsinghelpers.go"), header("internal/tsoptions/parsinghelpers.go") + ph);
+writeFileSync(
+  join(here, "tsgo/internal/tsoptions/parsinghelpers.go"),
+  header("internal/tsoptions/parsinghelpers.go") + ph,
+);
 console.log(`generated Clone and mergeCompilerOptions for ${fs.length} fields`);

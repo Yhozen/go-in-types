@@ -5,7 +5,16 @@
 // The reference outputs are cached in .run/tsgo-parity/ref (the native
 // binary does not change).
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, copyFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+  copyFileSync,
+} from "node:fs";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,12 +53,24 @@ function inputs(): string[] {
 
 async function check(bin: string[], dir: string, lib: string): Promise<string> {
   try {
-    const r = await run(bin[0]!, [...bin.slice(1), "--noLib", "--noEmit", "--skipLibCheck", "--singleThreaded", lib, "main.ts"], {
-      cwd: dir,
-      encoding: "latin1",
-      timeout: 120_000,
-      maxBuffer: 64 << 20,
-    });
+    const r = await run(
+      bin[0]!,
+      [
+        ...bin.slice(1),
+        "--noLib",
+        "--noEmit",
+        "--skipLibCheck",
+        "--singleThreaded",
+        lib,
+        "main.ts",
+      ],
+      {
+        cwd: dir,
+        encoding: "latin1",
+        timeout: 120_000,
+        maxBuffer: 64 << 20,
+      },
+    );
     return r.stdout + r.stderr + "\n[exit 0]\n";
   } catch (e: any) {
     return (e.stdout ?? "") + (e.stderr ?? "") + `\n[exit ${e.code}]\n`;
@@ -61,11 +82,24 @@ async function main() {
   const tsgo = tsgoDir();
   const bin = join(work, "tsgo-overlay");
   mkdirSync(work, { recursive: true });
-  execFileSync("go", ["build", "-tags", "purego", "-overlay", join(repo, "overlay/tsgo.json"), "-o", bin, "./cmd/tsgo"], {
-    cwd: tsgo,
-    stdio: "inherit",
-    env: { ...process.env, CGO_ENABLED: "0" },
-  });
+  execFileSync(
+    "go",
+    [
+      "build",
+      "-tags",
+      "purego",
+      "-overlay",
+      join(repo, "overlay/tsgo.json"),
+      "-o",
+      bin,
+      "./cmd/tsgo",
+    ],
+    {
+      cwd: tsgo,
+      stdio: "inherit",
+      env: { ...process.env, CGO_ENABLED: "0" },
+    },
+  );
   const ref = [join(repo, "node_modules/.bin/tsc")];
   const jobs = inputs().flatMap((f) => Object.keys(libs).map((m) => [f, m] as const));
   let ok = 0;

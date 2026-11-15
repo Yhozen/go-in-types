@@ -90,7 +90,8 @@ export function tsgoOverlay(dir: string): Record<string, string> {
   const mine = new Set(goFiles(join(here, "xxh3")));
   const empty = join(here, "xxh3/empty.go");
   for (const f of readdirSync(xxh3).sort()) {
-    if (f.endsWith(".go") && !f.endsWith("_test.go") && !mine.has(f)) replace[join(xxh3, f)] = empty;
+    if (f.endsWith(".go") && !f.endsWith("_test.go") && !mine.has(f))
+      replace[join(xxh3, f)] = empty;
   }
   return replace;
 }

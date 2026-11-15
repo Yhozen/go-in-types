@@ -49,22 +49,38 @@ export interface NativeResult {
 
 export async function native(file: string, overlay: string | null): Promise<NativeResult> {
   const src = join(corpusDir, file);
-  const bin = join(binDir, (overlay ? "ov-" : "real-") + file.replaceAll("/", "__").replace(/\.go$/, ""));
+  const bin = join(
+    binDir,
+    (overlay ? "ov-" : "real-") + file.replaceAll("/", "__").replace(/\.go$/, ""),
+  );
   mkdirSync(binDir, { recursive: true });
   const args = ["build", "-o", bin];
   if (overlay) args.push("-overlay", overlay);
   args.push(src);
   try {
-    await run("go", args, { cwd: dirname(src), env: { ...process.env, GOARCH: "amd64", CGO_ENABLED: "0" } });
+    await run("go", args, {
+      cwd: dirname(src),
+      env: { ...process.env, GOARCH: "amd64", CGO_ENABLED: "0" },
+    });
   } catch (e: any) {
     return { stdout: "", stderr: "", exit: -1, buildError: String(e.stderr || e.message) };
   }
   try {
-    const r = await run(bin, [], { encoding: "latin1", timeout: 20_000, maxBuffer: 64 << 20, cwd: dirname(src) });
+    const r = await run(bin, [], {
+      encoding: "latin1",
+      timeout: 20_000,
+      maxBuffer: 64 << 20,
+      cwd: dirname(src),
+    });
     return { stdout: r.stdout, stderr: r.stderr, exit: 0 };
   } catch (e: any) {
-    if (e.killed) return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", exit: -1, buildError: "timeout" };
-    return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", exit: typeof e.code === "number" ? e.code : -1 };
+    if (e.killed)
+      return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", exit: -1, buildError: "timeout" };
+    return {
+      stdout: e.stdout ?? "",
+      stderr: e.stderr ?? "",
+      exit: typeof e.code === "number" ? e.code : -1,
+    };
   }
 }
 
@@ -107,9 +123,15 @@ async function main() {
     } else {
       writeFileSync(outFile, text, "latin1");
     }
-    if (real && !f.startsWith("gotest/") && !readFileSync(join(corpusDir, f), "utf8").includes('"gointypes/rt"')) {
+    if (
+      real &&
+      !f.startsWith("gotest/") &&
+      !readFileSync(join(corpusDir, f), "utf8").includes('"gointypes/rt"')
+    ) {
       const n = await native(f, null);
-      const t = n.buildError ? `build error: ${n.buildError}` : formatOut(n.stdout, n.stderr, n.exit);
+      const t = n.buildError
+        ? `build error: ${n.buildError}`
+        : formatOut(n.stdout, n.stderr, n.exit);
       if (t !== text) {
         bad++;
         console.log(`REAL ${f}: overlay output differs from real Go: ${firstDiff(t, text)}`);

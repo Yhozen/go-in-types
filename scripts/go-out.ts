@@ -29,7 +29,9 @@ function block(s: string): string {
 
 export function formatOut(stdout: string, stderr: string, exit: number): string {
   const err = normaliseStderr(stderr);
-  return block(stdout) + (err === "" ? "" : "--- stderr ---\n" + block(err)) + `--- exit ${exit} ---\n`;
+  return (
+    block(stdout) + (err === "" ? "" : "--- stderr ---\n" + block(err)) + `--- exit ${exit} ---\n`
+  );
 }
 
 /** First differing line of two .out texts, for failure reports. */
@@ -37,7 +39,8 @@ export function firstDiff(want: string, got: string): string {
   const a = want.split("\n");
   const b = got.split("\n");
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if (a[i] !== b[i]) return `line ${i + 1}: want ${JSON.stringify(a[i] ?? "<eof>")} got ${JSON.stringify(b[i] ?? "<eof>")}`;
+    if (a[i] !== b[i])
+      return `line ${i + 1}: want ${JSON.stringify(a[i] ?? "<eof>")} got ${JSON.stringify(b[i] ?? "<eof>")}`;
   }
   return "identical";
 }

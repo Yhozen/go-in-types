@@ -48,7 +48,7 @@ export interface NativeResult {
 }
 
 export async function native(file: string, overlay: string | null): Promise<NativeResult> {
-  const src = join(corpusDir, file);
+  const src = resolve(corpusDir, file); // file: relative to tests/go, or absolute
   const bin = join(
     binDir,
     (overlay ? "ov-" : "real-") + file.replaceAll("/", "__").replace(/\.go$/, ""),
@@ -85,7 +85,7 @@ export async function native(file: string, overlay: string | null): Promise<Nati
 }
 
 export async function pool<T, R>(items: T[], n: number, f: (t: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
+  const out: R[] = Array.from({ length: items.length });
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(n, items.length) }, async () => {

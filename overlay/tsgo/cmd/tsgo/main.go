@@ -60,8 +60,14 @@ func main() {
 	rt.Exit(check(files, args))
 }
 
+// beforeCheck is set only in native coverage builds (cover_hook.go).
+var beforeCheck func()
+
 // check is the engine's entry point: no OS access below this line.
 func check(files map[string]string, args []string) int {
+	if beforeCheck != nil {
+		beforeCheck()
+	}
 	sys := &memSys{fs: vfstest.FromMapWithClock(files, true, fixedClock{}), out: &bytes.Buffer{}}
 	commandLine := tsoptions.ParseCommandLine(args, sys)
 	locale := commandLine.Locale()

@@ -5,7 +5,6 @@
 package tsoptions
 
 import (
-	"strings"
 
 	"github.com/microsoft/typescript-go/internal/ast"
 	"github.com/microsoft/typescript-go/internal/collections"

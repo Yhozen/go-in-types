@@ -1,0 +1,11 @@
+bob:25 dave:25 alice:30 carol:35 
+dave alice
+[13 45 54 63 66 84 102 115 121 165] true 23
+brown dog fox jumps lazy over quick the the
+12346 <nil>
+strconv.Atoi: parsing "12a": invalid syntax
+-255 255 strconv.ParseUint: parsing "300": value out of range
+-99 11111111 "a\"b" '☺'
+true é
+ <nil> [120 52 50]
+--- exit 0 ---

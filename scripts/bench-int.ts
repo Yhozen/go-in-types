@@ -10,6 +10,7 @@
 //   byte  uint8 values 0..255 (one or two nibbles), u8
 //   idx   int values 0..255 (one to three nibbles), i64
 //   i16   int16 values 0..400 (ast.Kind-like), i16
+//   mid   int values 4096..1,000,000 (four to six nibbles: counters, positions), i64
 //   32    full-width int32 / uint32 (random sign, 8 nibbles), i32 / u32
 //   64    full-width int64 / uint64 (16 nibbles), i64 / u64
 // `--noise N` adds N unrelated live types (a forced 16-wide trie of N slot
@@ -54,6 +55,7 @@ const COLS: Col[] = [
   { label: "byte", kind: () => "uint8", value: small(0, 255) },
   { label: "idx", kind: (s) => (s ? "int64" : "uint64"), value: small(0, 255) },
   { label: "i16", kind: () => "int16", value: small(0, 400) },
+  { label: "mid", kind: (s) => (s ? "int64" : "uint64"), value: small(4096, 1_000_000) },
   { label: "32", kind: (s) => (s ? "int32" : "uint32"), value: full },
   { label: "64", kind: (s) => (s ? "int64" : "uint64"), value: full },
 ];

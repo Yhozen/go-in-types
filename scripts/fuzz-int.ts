@@ -1,7 +1,8 @@
 // Fuzz the type-level integers (src/types/int.ts) against the reference
 // (scripts/int-ref.ts over src/ref/values.ts): random ops, kinds and
-// operands of every size (one nibble, bytes, short forms up to 2047, powers
-// of two, edges, full width), checked by tsrs as assertions.
+// operands of every size (one nibble, bytes, short forms up to 2047, mid
+// forms of four to six nibbles, +-1, powers of two, edges, full width),
+// checked by tsrs as assertions.
 //
 //   scripts/heavy.sh node scripts/fuzz-int.ts [--seed S] [--n N]
 //
@@ -32,7 +33,14 @@ const lit = (s: string) => JSON.stringify(s);
 /** An operand of kind k from a mix of sizes. */
 function operand(k: IntKind): I64 {
   const w = WIDTH[k];
-  switch (Math.floor(random() * 7)) {
+  switch (Math.floor(random() * 9)) {
+    case 7: {
+      // mid-size forms (four to six nibbles: loop counters, positions)
+      const m = 1 << (13 + Math.floor(random() * 11));
+      return refValue(BigInt(Math.floor(random() * 2 * m) - m), k);
+    }
+    case 8:
+      return refValue(random() < 0.5 ? 1n : -1n, k);
     case 0:
       return refValue(BigInt(Math.floor(random() * 16) - 8), k);
     case 1:

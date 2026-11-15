@@ -432,56 +432,58 @@ export function growCap(newLen: number, oldCap: number, elemSize: number, noscan
 
 // ------------------------------------------------------------ print
 
-/** Go's runtime printfloat (print/println of floats). */
-export function printFloat(v: number): string {
+/**
+ * Go 1.27's runtime printfloat64/32 (print/println of floats, float panic
+ * values): strconv.AppendFloat(v, 'g', -1, bits), the shortest decimal that
+ * reads back as v.
+ */
+export function printFloat(v: number, bits: 32 | 64 = 64): string {
   if (v !== v) return "NaN";
-  if (v + v === v && v > 0) return "+Inf";
-  if (v + v === v && v < 0) return "-Inf";
-  const n = 7;
-  const buf: string[] = new Array(n + 7).fill("0");
-  buf[0] = "+";
-  let e = 0;
-  if (v === 0) {
-    if (1 / v < 0) buf[0] = "-";
-  } else {
-    if (v < 0) {
-      v = -v;
-      buf[0] = "-";
+  if (v === Infinity) return "+Inf";
+  if (v === -Infinity) return "-Inf";
+  const neg = v < 0 || (v === 0 && 1 / v < 0);
+  const [digs, dp] = shortest(Math.abs(v), bits);
+  const nd = digs.length;
+  const exp = dp - 1;
+  let out: string;
+  if (nd > 0 && (exp < -4 || exp >= 6)) {
+    // %e with nd - 1 fraction digits, at least two exponent digits
+    const e = Math.abs(exp);
+    out = `${digs[0]}${nd > 1 ? "." + digs.slice(1) : ""}e${exp < 0 ? "-" : "+"}${e < 10 ? "0" : ""}${e}`;
+  } else if (nd === 0) out = "0";
+  else if (dp <= 0) out = `0.${"0".repeat(-dp)}${digs}`;
+  else if (dp >= nd) out = digs + "0".repeat(dp - nd);
+  else out = `${digs.slice(0, dp)}.${digs.slice(dp)}`;
+  return (neg ? "-" : "") + out;
+}
+
+/** Shortest round-trip digits of v >= 0 and the decimal point position (v = 0.digs * 10^dp). */
+function shortest(v: number, bits: 32 | 64): [string, number] {
+  if (v === 0) return ["", 0];
+  const split = (s: string): [string, number] => {
+    const [m, e] = s.split("e");
+    const digs = m!.replace(".", "").replace(/0+$/, "");
+    return [digs, Number(e) + 1];
+  };
+  if (bits === 64) return split(v.toExponential());
+  // float32: the closest of the shortest decimals that round to v
+  for (let p = 1; p <= 9; p++) {
+    const near = v.toExponential(p - 1);
+    const [m, e] = near.split("e");
+    const units = BigInt(m!.replace(".", ""));
+    let best: string | null = null;
+    let bestDist = Infinity;
+    for (const du of [-1n, 0n, 1n]) {
+      const u = units + du;
+      if (u <= 0n) continue;
+      const s = `${u}e${Number(e) - (p - 1)}`;
+      if (Math.fround(Number(s)) !== v) continue;
+      const d = Math.abs(Number(s) - v);
+      if (d < bestDist) ((best = s), (bestDist = d));
     }
-    while (v >= 10) {
-      e++;
-      v /= 10;
-    }
-    while (v < 1) {
-      e--;
-      v *= 10;
-    }
-    let h = 5.0;
-    for (let i = 0; i < n; i++) h /= 10;
-    v += h;
-    if (v >= 10) {
-      e++;
-      v /= 10;
-    }
+    if (best !== null) return split(Number(best).toExponential(p - 1));
   }
-  for (let i = 0; i < n; i++) {
-    const s = Math.trunc(v);
-    buf[i + 2] = String.fromCharCode(s + 48);
-    v -= s;
-    v *= 10;
-  }
-  buf[1] = buf[2]!;
-  buf[2] = ".";
-  buf[n + 2] = "e";
-  buf[n + 3] = "+";
-  if (e < 0) {
-    e = -e;
-    buf[n + 3] = "-";
-  }
-  buf[n + 4] = String.fromCharCode(Math.trunc(e / 100) + 48);
-  buf[n + 5] = String.fromCharCode((Math.trunc(e / 10) % 10) + 48);
-  buf[n + 6] = String.fromCharCode((e % 10) + 48);
-  return buf.join("");
+  return split(v.toExponential(8));
 }
 
 const f64 = new Float64Array(1);

@@ -192,6 +192,9 @@ class Emitter {
     p.funcs.forEach((f, fid) => this.func(f, fid));
 
     // function entries for dynamic calls
+    p.funcs.forEach((f, fid) => {
+      if (/^gointypes\/softfloat\.PrintFloat(32|64)$/.test(f.name)) this.dynFuncs.add(fid);
+    });
     for (const fid of [...this.dynFuncs].sort((a, b) => a - b)) this.funcEntry(fid);
 
     // method tables
@@ -223,6 +226,15 @@ class Emitter {
       if (!seenDyn.has(t)) dyn.push(t);
     }
     const tables = progTables(p, dyn, ifaces, "P");
+    // float panic values print through softfloat.PrintFloat64/32 (Go code)
+    const flt: string[] = [];
+    for (const t of dyn) {
+      const ti = this.info(t);
+      if (ti.k !== "float") continue;
+      const fid = p.funcs.findIndex((f) => f.name === `gointypes/softfloat.PrintFloat${ti.fbits}`);
+      if (fid >= 0) flt.push(`${n2(t)}: ${n2(fid)};`);
+    }
+    if (flt.length) mt.push(`interface Mt_Flt { ${flt.join(" ")} }`);
     // per-type panic print kinds, zero results, recover entries
     const pk: string[] = [];
     for (const t of dyn) pk.push(`${n2(t)}: ${this.printKind(t)};`);
@@ -255,7 +267,7 @@ class Emitter {
       `type PN<H, K, X, F, D, Fid> = R.Pc<H, K, X, F, [${this.ES}, "invalid memory address or nil pointer dereference"], ["", [], D, Fid]>;`,
     );
     tail.push(
-      `interface Prog { e: E; pk: PK; zr: ZR; rc: RC; p: P; mErr: ${this.methodTabs.has("Error") ? "Mt_Error" : "{}"}; mStr: ${this.methodTabs.has("String") ? "Mt_String" : "{}"}; es: ${this.ES}; fuel: ${this.o.fuel ? '"' + "x".repeat(this.o.fuel) + '"' : "R.FUEL"}; }`,
+      `interface Prog { e: E; pk: PK; zr: ZR; rc: RC; p: P; mErr: ${this.methodTabs.has("Error") ? "Mt_Error" : "{}"}; mStr: ${this.methodTabs.has("String") ? "Mt_String" : "{}"}; mFlt: ${flt.length ? "Mt_Flt" : "{}"}; es: ${this.ES}; fuel: ${this.o.fuel ? '"' + "x".repeat(this.o.fuel) + '"' : "R.FUEL"}; }`,
     );
     tail.push(`interface E { ${this.entries.join(" ")} }`);
     const mainCont =
@@ -733,6 +745,20 @@ class FuncEmitter {
   }
 }
 
+/**
+ * A tuple literal. tsrs defers a tuple literal in an alias when an element
+ * names a type alias (H4): its elements are resolved only when read, under
+ * the mapper of the segment that built it. Values that outlive a step (call
+ * arguments, saved registers, defer records, results) must not be such
+ * tuples, so those are built with `R.TPush` (a constructor) instead.
+ */
+export function tup(els: string[]): string {
+  if (els.every((e) => !ALIAS_REF.test(e))) return `[${els.join(", ")}]`;
+  return els.reduce((acc, e) => `R.TPush<${acc}, ${e}>`, "[]");
+}
+/** Text that may name a type alias: a generic reference or a zero-value alias. */
+const ALIAS_REF = /[A-Za-z_$][\w$]*\s*<|\bZO?\d+\b/;
+
 /** Aggregates with more slots have no zero value in types. */
 const BIG_SLOTS = 1 << 16;
 const BARE = "F extends string ? ";
@@ -788,12 +814,12 @@ class SegB {
 
   /**
    * Extra weight of ops that build or walk aggregate values: about
-   * n (40 + 4 n) for n slots (heap.ts LoadK grows its tuple one slot at a
-   * time; a 1000-slot load costs ~4M instantiations).
+   * n (40 + 4 n) for n < 32 slots (heap.ts LoadK/StoreK slot by slot), and
+   * 70 n past that (the bulk paths: whole leaves and subtrees).
    */
   aggCost(ins: Instr): number {
     const sl = (t: number) => (t >= 0 && this.e.info(t).agg ? this.e.info(t).slots : 0);
-    const w = (n: number) => n * (40 + 4 * n);
+    const w = (n: number) => (n < 32 ? n * (40 + 4 * n) : 300 + 70 * n);
     switch (ins.op) {
       case "load":
       case "lookup":
@@ -902,7 +928,7 @@ class SegB {
     this.Fv = saved.F;
     this.e.out.push(`interface ${tab} { ${props.join(" ")} }`);
     this.end(
-      `${x} extends keyof ${tab} ? R.Y<${tab}[${x}], ${this.H}, ${this.K}, ${this.X}, [${avals.join(", ")}], ${this.Fv}> : ${def}`,
+      `${x} extends keyof ${tab} ? R.Y<${tab}[${x}], ${this.H}, ${this.K}, ${this.X}, ${tup(avals)}, ${this.Fv}> : ${def}`,
     );
   }
   /** An operand as an atom (binding its expression if needed). */
@@ -963,7 +989,7 @@ class SegB {
       return v ? this.forceAtomText(v) : "null";
     });
     const d = fe.hasD ? this.dText() : "null";
-    return `["", [${regs.join(", ")}], ${d}, ${n2(fe.fid)}]`;
+    return tup(['""', tup(regs), d, n2(fe.fid)]);
   }
   dText(): string {
     const v = this.env.get(D_REG);
@@ -1136,7 +1162,7 @@ class SegB {
     const fe = this.fe;
     const key = `c${fe.fid}_${fe.callSite++}`;
     const live = this.liveNow(extraLive).filter((r) => r !== dst && r !== D_REG && this.env.has(r));
-    const regsT = `[${live.map((r) => this.env.get(r)!.t).join(", ")}]`;
+    const regsT = tup(live.map((r) => this.env.get(r)!.t));
     const cont = `R.Ct<"n", "${key}", ${regsT}, ${fe.hasD ? this.dText() : "null"}, ${n2(fe.fid)}, "">`;
     return { cont, resume: key, live };
   }
@@ -1210,7 +1236,7 @@ class SegB {
       }
       case "return": {
         const rs = ins.results.map((o) => this.val(o).t);
-        const v = rs.length === 0 ? "null" : rs.length === 1 ? rs[0]! : `[${rs.join(", ")}]`;
+        const v = rs.length === 0 ? "null" : rs.length === 1 ? rs[0]! : tup(rs);
         return this.end(this.tailRet(v));
       }
       case "panic": {
@@ -1437,7 +1463,7 @@ class SegB {
       }
       case "makeClosure": {
         const bs = ins.bindings.map((o) => this.val(o).t);
-        return this.setReg(ins.dst, `[${n2(ins.fn)}, [${bs.join(", ")}]]`);
+        return this.setReg(ins.dst, tup([n2(ins.fn), tup(bs)]));
       }
       case "call":
         return this.call(ins);
@@ -1473,7 +1499,7 @@ class SegB {
     const fe = this.fe;
     const key = `c${fe.fid}_${fe.callSite++}`;
     const live = this.liveNow().filter((r) => r !== D_REG && this.env.has(r));
-    const regsT = `[${live.map((r) => this.env.get(r)!.t).join(", ")}]`;
+    const regsT = tup(live.map((r) => this.env.get(r)!.t));
     const cont = `R.Ct<"d", "${key}", ${regsT}, ${this.dText()}, ${n2(fe.fid)}, "r">`;
     return { cont, resume: key, live };
   }
@@ -1756,7 +1782,7 @@ class SegB {
       this.check(`Hp.NilCk<${fv}>`, (r) => this.pnH(r));
       const argv = ins.args.map((o) => this.val(o).t);
       const { cont, resume, live } = this.callCont(ins.dst);
-      const tail = `R.Cl<${this.H}, R.Cons<${cont}, ${this.K}>, ${this.X}, ${this.Fv}, ${fv}[0], [${argv.join(", ")}], ${fv}[1]>`;
+      const tail = `R.Cl<${this.H}, R.Cons<${cont}, ${this.K}>, ${this.X}, ${this.Fv}, ${fv}[0], ${tup(argv)}, ${fv}[1]>`;
       this.finishSeg(tail);
       this.startResume(resume, ins.dst, live);
       return;
@@ -1767,7 +1793,7 @@ class SegB {
     const argv = ins.args.map((o) => this.val(o).t);
     const tab = e.methodTabs.has(c.method) ? `Mt_${mname(c.method)}` : "{}";
     const { cont, resume, live } = this.callCont(ins.dst);
-    const tail = `R.Cl<${this.H}, R.Cons<${cont}, ${this.K}>, ${this.X}, ${this.Fv}, R.Look<${tab}, ${rv}[0]>, [${[`${rv}[1]`, ...argv].join(", ")}], []>`;
+    const tail = `R.Cl<${this.H}, R.Cons<${cont}, ${this.K}>, ${this.X}, ${this.Fv}, R.Look<${tab}, ${rv}[0]>, ${tup([`${rv}[1]`, ...argv])}, []>`;
     this.finishSeg(tail);
     this.startResume(resume, ins.dst, live);
   }
@@ -1777,19 +1803,19 @@ class SegB {
     const e = this.e;
     const argv = ins.args.map((o) => this.val(o).t);
     let rec: string;
-    if ("static" in c) rec = `[${n2(c.static)}, [${argv.join(", ")}], []]`;
+    if ("static" in c) rec = tup([n2(c.static), tup(argv), "[]"]);
     else if ("value" in c) {
       const fv = this.atom(c.value);
-      rec = `R.DeferVal<${fv}, [${argv.join(", ")}]>`;
+      rec = `R.DeferVal<${fv}, ${tup(argv)}>`;
     } else if ("invoke" in c) {
       const rv = this.atom(c.invoke);
       this.check(`Hp.NilCk<${rv}>`, (r) => this.pnH(r));
       const tab = e.methodTabs.has(c.method) ? `Mt_${mname(c.method)}` : "{}";
-      rec = `[R.Look<${tab}, ${rv}[0]>, [${[`${rv}[1]`, ...argv].join(", ")}], []]`;
+      rec = tup([`R.Look<${tab}, ${rv}[0]>`, tup([`${rv}[1]`, ...argv]), "[]"]);
     } else {
       // builtin defers: record name, args and the static print info
       const info = ins.args.map((o) => this.printInfo(this.typeOf(o)));
-      rec = `["b:${c.builtin}", [${argv.join(", ")}], [${info.join(", ")}]]`;
+      rec = tup([`"b:${c.builtin}"`, tup(argv), `[${info.join(", ")}]`]);
     }
     if (ins.stack) {
       // onto the frame a deferstack value names (range-over-func bodies)
@@ -1967,7 +1993,7 @@ class SegB {
         const typ = this.val(ins.args[1]!).t;
         const meth = this.val(ins.args[2]!).t;
         this.check(`R.WrapNilCk<${p}>`, () =>
-          this.panicState(`[${e.PE}, R.WrapNilMsg<${typ}, ${meth}>]`),
+          this.panicState(tup([e.PE, `R.WrapNilMsg<${typ}, ${meth}>`])),
         );
         return set(p, { atom: true });
       }

@@ -49,7 +49,7 @@
 //
 // | op         |    1 | byte |  idx |  i16 |   32 |     64 |
 // | ---------- | ---: | ---: | ---: | ---: | ---: | -----: |
-// | Add        |   13 |   18 |   37 |   43 |  352 |    577 |
+// | Add        |   13 |   18 |   37 |   43 |  381 |    608 |
 // | Sub        |   18 |   23 |   41 |   50 |  345 |    573 |
 // | Mul        |   14 |  367 |  322 |  408 | 3032 | 10,739 |
 // | Quo        |   14 |  675 |  673 |  823 | 2435 |  4,422 |
@@ -62,13 +62,21 @@
 // | Shr        |   31 |   51 |   31 |   28 |  158 |    262 |
 // | Shr (u)    |  138 |   53 |   41 |   28 |  200 |    321 |
 // | Eq         |    3 |    3 |    3 |    3 |    3 |      3 |
-// | Lt, Le     |   23 |   23 |   23 |   23 |  135 |    239 |
+// | Lt, Le     |   23 |   23 |   23 |   23 |  175 |    278 |
 // | Lt (u)     |   23 |   23 |   23 |   23 |  142 |    214 |
 // | Neg        |   10 |   14 |   10 |   13 |  133 |    145 |
 // | Not        |    6 |    6 |    6 |    6 |   73 |    121 |
 // | Conv trunc |   17 |    6 |   17 |   17 |   43 |     43 |
 // | Conv zext  |    6 |   36 |    6 |   22 |   45 |      6 |
 // | ToDec      |    6 |   19 |    6 |    6 | 1153 |  3,899 |
+//
+// Mid-size operands ("mid": i64 4096..1,000,000, `bench-int.ts` column
+// `mid`) take the six-nibble split: Add 168 (217 through the loop), Lt 99
+// (176), Le 101; a + 1 and a - 1 are Inc/Dec1. Sub of a mid-size operand
+// still takes the loop (229). The split costs Add, Lt and Le ~30-40 more on
+// 32/64-bit operands before they fall back to the loops. An empty Go loop
+// at N = 10k-20k costs 126 instantiations per iteration (202 before; 82 at N
+// up to ~600).
 //
 // Constant operands on the short paths (a in 0..2047): a * 10 ~100, a / 10
 // ~120 (u: ~90), a % 10 ~115, a * 2^k ~38, a / 2 ~46, a >> 3 ~27, a << 3
@@ -369,14 +377,22 @@ type Add3<
     >
   : never;
 
-/** a + b: one lookup for one or two nibbles, the split for three, else the loop. */
+/** a + b: one lookup for one or two nibbles, the split for three, then +-1 and up to six nibbles, else the loop. */
 type AddS<A extends string, B extends string> = string extends P.ADD2[`${A}_${B}`]
   ? A extends keyof T.TODEC
     ? B extends keyof T.TODEC
       ? Add3<A, B>
-      : Add64<A, B>
-    : Add64<A, B>
+      : AddM<A, B>
+    : AddM<A, B>
   : P.ADD2[`${A}_${B}`];
+/** Mid-size operands: a + 1, a - 1, and forms of up to six nibbles (loop counters, positions). */
+type AddM<A extends string, B extends string> = B extends "1"
+  ? Inc<A, "">
+  : B extends "f"
+    ? Dec1<A, "">
+    : A extends "1"
+      ? Inc<B, "">
+      : Add6<A, B>;
 
 /** a - b as a + (-b) on the short paths. */
 type SubS<A extends string, B extends string> = B extends keyof T.NEG3
@@ -384,10 +400,113 @@ type SubS<A extends string, B extends string> = B extends keyof T.NEG3
     ? A extends keyof T.TODEC
       ? T.NEG3[B] extends keyof T.TODEC
         ? Add3<A, T.NEG3[B]>
-        : Sub64<A, B>
-      : Sub64<A, B>
+        : AddM<A, T.NEG3[B]>
+      : AddM<A, T.NEG3[B]>
     : P.ADD2[`${A}_${T.NEG3[B]}`]
   : Sub64<A, B>;
+
+// Mid-size forms (four to six nibbles: -2^23..2^23-1) split into three low
+// nibbles and a high part of up to three nibbles, which takes the short
+// paths: + is three nibble lookups and an Add3, < compares the high parts
+// (Lt3) and then the low nibbles.
+
+/** [n0, n1, n2, Hi] for forms of up to six nibbles (Hi canonical, up to three nibbles), else false. */
+type Split6<A extends string> = A extends `${infer a0}${infer a1}${infer a2}${infer H}`
+  ? H extends ""
+    ? [a0, a1, a2, Ext<A>]
+    : H extends keyof T.TODEC
+      ? [a0, a1, a2, H]
+      : false
+  : A extends `${infer a0}${infer a1}${infer H}`
+    ? H extends ""
+      ? [a0, a1, Ext<A>, Ext<A>]
+      : false
+    : [A, Ext<A>, Ext<A>, Ext<A>];
+type Add6<A extends string, B extends string> =
+  Split6<A> extends [
+    infer a0 extends string,
+    infer a1 extends string,
+    infer a2 extends string,
+    infer AH extends string,
+  ]
+    ? Split6<B> extends [
+        infer b0 extends string,
+        infer b1 extends string,
+        infer b2 extends string,
+        infer BH extends string,
+      ]
+      ? Add6L<T.ADD[`0${a0}${b0}`], a1, a2, b1, b2, AH, BH>
+      : Add64<A, B>
+    : Add64<A, B>;
+type Add6L<
+  R0 extends string,
+  a1 extends string,
+  a2 extends string,
+  b1 extends string,
+  b2 extends string,
+  AH extends string,
+  BH extends string,
+> = R0 extends `${infer d0}${infer c0}`
+  ? T.ADD[`${c0}${a1}${b1}`] extends `${infer d1}${infer c1}`
+    ? T.ADD[`${c1}${a2}${b2}`] extends `${infer d2}${infer c2}`
+      ? Cat<`${d0}${d1}${d2}`, c2 extends "0" ? Add3<AH, BH> : Inc<Add3<AH, BH>, "">>
+      : never
+    : never
+  : never;
+
+/** a - 1 for canonical a (the borrow runs through low "0" nibbles). */
+type Dec1<A extends string, O extends string> = A extends `${infer a}${infer R}`
+  ? a extends "0"
+    ? R extends ""
+      ? `${O}f`
+      : Dec1<R, `${O}f`>
+    : R extends ""
+      ? a extends "8"
+        ? `${O}7f`
+        : Trim<`${O}${PRED[a & keyof PRED]}`>
+      : Cat<`${O}${PRED[a & keyof PRED]}`, R>
+  : "f";
+interface PRED {
+  "1": "0";
+  "2": "1";
+  "3": "2";
+  "4": "3";
+  "5": "4";
+  "6": "5";
+  "7": "6";
+  "8": "7";
+  "9": "8";
+  a: "9";
+  b: "a";
+  c: "b";
+  d: "c";
+  e: "d";
+  f: "e";
+}
+
+/** a < b (a != b) for forms of up to six nibbles; Hi is HI3 (signed) or HIU3 (unsigned); else never. */
+type Lt6<A extends string, B extends string, Hi extends Record<string, string>> =
+  Split6<A> extends [
+    infer a0 extends string,
+    infer a1 extends string,
+    infer a2 extends string,
+    infer AH extends string,
+  ]
+    ? Split6<B> extends [
+        infer b0 extends string,
+        infer b1 extends string,
+        infer b2 extends string,
+        infer BH extends string,
+      ]
+      ? AH extends BH
+        ? a2 extends b2
+          ? a1 extends b1
+            ? T.NLT[`${a0}${b0}`]
+            : T.NLT[`${a1}${b1}`]
+          : T.NLT[`${a2}${b2}`]
+        : Lt3<AH, BH, Hi>
+      : never
+    : never;
 
 /** a < b for forms of up to three nibbles; Hi is HI3 (signed) or HIU3 (unsigned). */
 type Lt3<
@@ -608,18 +727,21 @@ type LtG<A extends string, B extends string, U extends boolean> =
 type LtS<A extends string, B extends string> = A extends keyof T.TODEC
   ? B extends keyof T.TODEC
     ? Lt3<A, B, T.HI3>
-    : LtG<A, B, false>
+    : LtM<A, B, false, T.HI3>
   : A extends B
     ? false
-    : LtG<A, B, false>;
+    : LtM<A, B, false, T.HI3>;
 
 type LtU<A extends string, B extends string> = A extends keyof T.TODEC
   ? B extends keyof T.TODEC
     ? Lt3<A, B, T.HIU3>
-    : LtG<A, B, true>
+    : LtM<A, B, true, T.HIU3>
   : A extends B
     ? false
-    : LtG<A, B, true>;
+    : LtM<A, B, true, T.HIU3>;
+/** a < b (a != b): the six-nibble split, else the loop. */
+type LtM<A extends string, B extends string, U extends boolean, Hi extends Record<string, string>> =
+  Lt6<A, B, Hi> extends infer R extends boolean ? ([R] extends [never] ? LtG<A, B, U> : R) : never;
 
 // ---- unsigned magnitudes ----
 

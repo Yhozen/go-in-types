@@ -132,7 +132,11 @@ Rules:
   channel or send on a full one traps ("deadlock"), except a receive from a
   closed channel, which yields the zero value.
 - `print`/`println` write to stderr in Go's format; `gointypes/rt.Write(fd,
-  b)` writes bytes to fd 1 or 2. The run's result is `{ stdout, stderr,
+  b)` writes bytes to fd 1 or 2. Floats print as Go 1.27 does
+  (strconv 'g', shortest): the front end turns each float argument into a
+  call of `softfloat.PrintFloat64/32` (Go code, strconv.AppendFloat) and
+  prints the string; a fatal panic with a float value calls the same
+  function (emitter, `Mt_Flt`). The run's result is `{ stdout, stderr,
   exit, ops }`.
 
 ## Contract changes

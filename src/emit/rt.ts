@@ -10,6 +10,8 @@ export type St<Tag, Key, H, K, X, A, F> = Tag extends unknown ? [Tag, Key, H, K,
 export type Ct<Kind, Key, Regs, D, Fid, Mode> = Kind extends unknown
   ? [Kind, Key, Regs, D, Fid, Mode]
   : never;
+/** T with V appended (the emitter's tuple constructor, emit.ts `tup`). */
+export type TPush<T, V> = T extends unknown[] ? [...T, V] : never;
 /** A cons cell (stack, defer list, panic chain). */
 export type Cons<A, B> = A extends unknown ? [A, B] : never;
 /** Machine extras: stdout, stderr, panic chain, next panic serial. */
@@ -70,6 +72,8 @@ export interface ProgB {
   /** method tables for printing panics */
   mErr: unknown;
   mStr: unknown;
+  /** float dynamic types -> softfloat.PrintFloat64/32 (printing a float panic value) */
+  mFlt: unknown;
 }
 
 /**
@@ -420,7 +424,17 @@ type FatalCall<P extends ProgB, H, K, X, F, Kx, V> = V extends null
           F,
           Mk3<P["mStr"][I0<V>], [I1<V>], []>
         >
-      : FatalI<P, H, K, X, F, `${Kx & string}x`>;
+      : I0<V> extends keyof P["mFlt"]
+        ? Ent<
+            P["e"],
+            `f${P["mFlt"][I0<V>] & string}`,
+            H,
+            Cons<Ct<"q", "", [], null, "0", Kx>, K>,
+            X,
+            F,
+            Mk3<P["mFlt"][I0<V>], [I1<V>], []>
+          >
+        : FatalI<P, H, K, X, F, `${Kx & string}x`>;
 type FatalPrint<P extends ProgB, H, K, X> = Ex<
   H,
   K,
@@ -436,7 +450,16 @@ type PQ<P extends ProgB, L> =
 type PLine<
   P extends ProgB,
   Q,
-> = `panic: ${I5<Q> extends string ? Indent<I5<Q>> : PanicVal<P, I0<Q>> & string}${I1<Q> extends true ? (I2<Q> extends true ? " [recovered, repanicked]" : " [recovered]") : ""}\n`;
+> = `panic: ${I5<Q> extends string ? PStr<P, I0<Q>, I5<Q>> : PanicVal<P, I0<Q>> & string}${I1<Q> extends true ? (I2<Q> extends true ? " [recovered, repanicked]" : " [recovered]") : ""}\n`;
+/** A panic value's printed text S (Error()/String(), or a float's printfloat: `T(S)` when named). */
+type PStr<P extends ProgB, V, S> =
+  I0<V> extends keyof P["mFlt"]
+    ? I0<V> extends keyof P["pk"]
+      ? I1<P["pk"][I0<V>]> extends true
+        ? `${I2<P["pk"][I0<V>]> & string}(${S & string})`
+        : S
+      : S
+    : Indent<S>;
 type Str<X> = X extends string ? X : "";
 type Indent<S> = S extends `${infer A}\n${infer B}` ? `${A}\n\t${Indent<B>}` : S;
 type PanicVal<P extends ProgB, V> = V extends null

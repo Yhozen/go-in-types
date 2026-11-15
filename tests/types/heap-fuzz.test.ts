@@ -25,8 +25,8 @@ const T_BOOL = 0,
   T_PS = 7,
   T_SINT = 8,
   T_SS = 9,
-  T_A20 = 10,
-  T_PA20 = 11,
+  T_A40 = 10,
+  T_PA40 = 11,
   T_EFACE = 12,
   T_T = 13,
   T_I = 14,
@@ -67,8 +67,8 @@ function baseTypes(): Type[] {
   t[T_PS] = { k: "pointer", elem: T_S, slots: 1 };
   t[T_SINT] = { k: "slice", elem: T_INT, slots: 1 };
   t[T_SS] = { k: "slice", elem: T_S, slots: 1 };
-  t[T_A20] = { k: "array", elem: T_INT, len: 20, slots: 20 };
-  t[T_PA20] = { k: "pointer", elem: T_A20, slots: 1 };
+  t[T_A40] = { k: "array", elem: T_INT, len: 40, slots: 40 };
+  t[T_PA40] = { k: "pointer", elem: T_A40, slots: 1 };
   t[T_EFACE] = { k: "interface", methods: [], sigs: [], slots: 1 };
   t[T_T] = {
     k: "named",
@@ -124,7 +124,7 @@ function baseTypes(): Type[] {
 const PTR: Record<number, number> = {
   [T_INT]: T_PINT,
   [T_S]: T_PS,
-  [T_A20]: T_PA20,
+  [T_A40]: T_PA40,
   [T_A3]: T_PA3,
   [T_F]: T_PF,
   [T_STR]: T_PSTR,
@@ -223,7 +223,7 @@ function genCase(seed: number, nOps: number) {
   const ops: (() => boolean)[] = [];
   // alloc
   ops.push(() => {
-    const e = pick([T_INT, T_S, T_A20, T_A3, T_F, T_STR, T_U8]);
+    const e = pick([T_INT, T_S, T_A40, T_A3, T_F, T_STR, T_U8]);
     const pt = PTR[e]!;
     const dst = newReg(pt);
     steps.push({
@@ -326,12 +326,12 @@ function genCase(seed: number, nOps: number) {
   });
   // indexAddr on slices and array pointers
   ops.push(() => {
-    const xs = regsOf((t) => t in SLICE_ELEM || t === T_PA20 || t === T_PA3);
+    const xs = regsOf((t) => t in SLICE_ELEM || t === T_PA40 || t === T_PA3);
     if (xs.length === 0) return false;
     const [x, xt] = pick(xs);
     const isSlice = xt in SLICE_ELEM;
     const e = isSlice ? SLICE_ELEM[xt]! : T_INT;
-    const alen = xt === T_PA20 ? 20 : 3;
+    const alen = xt === T_PA40 ? 40 : 3;
     const i = r() < 0.1 ? pick([-1, 25, 100]) : int(0, isSlice ? 8 : alen + 1);
     const dst = newReg(PTR[e]!);
     steps.push({
@@ -355,7 +355,7 @@ function genCase(seed: number, nOps: number) {
   });
   // slice
   ops.push(() => {
-    const xs = regsOf((t) => t in SLICE_ELEM || t === T_PA20 || t === T_PA3);
+    const xs = regsOf((t) => t in SLICE_ELEM || t === T_PA40 || t === T_PA3);
     if (xs.length === 0) return false;
     const [x, xt] = pick(xs);
     const isSlice = xt in SLICE_ELEM;
@@ -378,7 +378,7 @@ function genCase(seed: number, nOps: number) {
         const es = strLit(encNat(slots(e)));
         c.same();
         c.line(
-          `type ${c.R(dst)} = ${isSlice ? `H.SliceS<${c.R(x)}, ${o(lo)}, ${o(hi)}, ${o(mx)}, ${es}>` : `H.SliceA<${c.R(x)}, ${o(lo)}, ${o(hi)}, ${o(mx)}, ${es}, ${strLit(encNat(xt === T_PA20 ? 20 : 3))}>`};`,
+          `type ${c.R(dst)} = ${isSlice ? `H.SliceS<${c.R(x)}, ${o(lo)}, ${o(hi)}, ${o(mx)}, ${es}>` : `H.SliceA<${c.R(x)}, ${o(lo)}, ${o(hi)}, ${o(mx)}, ${es}, ${strLit(encNat(xt === T_PA40 ? 40 : 3))}>`};`,
         );
       },
     });

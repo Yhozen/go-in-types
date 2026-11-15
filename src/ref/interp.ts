@@ -353,7 +353,7 @@ export class Machine {
         s = String(iv.v);
         break;
       case "float":
-        s = printFloat(ti.fbits === 32 ? bitsToF32(iv.v) : bitsToF64(iv.v));
+        s = ti.fbits === 32 ? printFloat(bitsToF32(iv.v), 32) : printFloat(bitsToF64(iv.v));
         break;
       case "string":
         if (!named) return indented(iv.v);
@@ -1687,7 +1687,9 @@ class Ctx {
       case "string":
         return (v) => v;
       case "float":
-        return ti.fbits === 32 ? (v) => printFloat(bitsToF32(v)) : (v) => printFloat(bitsToF64(v));
+        return ti.fbits === 32
+          ? (v) => printFloat(bitsToF32(v), 32)
+          : (v) => printFloat(bitsToF64(v));
       case "slice":
         return (v: Slice | null) => (v === null ? "[0/0]0x0" : `[${v.len}/${v.cap}]0xc000010000`);
       case "interface":

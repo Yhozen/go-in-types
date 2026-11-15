@@ -105,6 +105,20 @@ const ops: Record<string, Op> = {
     a0: q("x"),
     chk: (l) => [`H.Load1<Res[0], H.PtrMk<${q(lazyId(l))}, ${q(lazySlot(l))}>, "z">`, q(`w${l}`)],
   },
+  // bulk paths (64 slots of a lazy object, at varied offsets)
+  lazyLoadK: {
+    a: `H.LoadK<H, LK, Z64>`,
+    a0: q("x"),
+    chk: () => [`Res[1]["length"]`, `64`],
+  },
+  lazyStoreK: {
+    h: `H.StoreK<H, LK, V64>`,
+    a0: q("x"),
+    chk: (l) => [
+      `H.Load1<Res[0], H.PtrMk<${q(lazyId(l))}, ${q(nib(lazyKSlot(l) + 63))}>, "z">`,
+      q(`w${l}`),
+    ],
+  },
   fieldAddr: {
     a: `H.FieldAddr<P1, "3">`,
     a0: q("x"),
@@ -165,6 +179,7 @@ const allocId = (i: number) => hex(allocBase + i, 5);
 const lazyId = (i: number) => hex(0x100 + (i % LAZY), 5);
 const lazy2Id = (i: number) => hex(0x100 + ((i + 1) % LAZY), 5);
 const lazySlot = (i: number) => nib((i * 131 + 7) % LAZY_SLOTS);
+const lazyKSlot = (i: number) => (i * 131 + 7) % (LAZY_SLOTS - 64);
 
 function generate(op: string, n: number, k: number): string {
   const o = ops[op]!;
@@ -252,6 +267,17 @@ function generate(op: string, n: number, k: number): string {
   tab("P1T", (i) => `[${q(tgtId(i))}, "1"]`);
   tab("P2T", (i) => `[${q(tgtId(i))}, "2"]`);
   tab("LPT", (i) => `[${q(lazyId(i))}, ${q(lazySlot(i))}]`);
+  tab("LKT", (i) => `[${q(lazyId(i))}, ${q(nib(lazyKSlot(i)))}]`);
+  w(
+    `type Z64 = [${range(64)
+      .map(() => '"z"')
+      .join(", ")}];`,
+  );
+  w(
+    `type V64T<V> = [${range(64)
+      .map(() => "V")
+      .join(", ")}];`,
+  );
   w(`type At<T, I> = I extends keyof T ? T[I] : never;`);
   const sub = (s: string) =>
     s
@@ -264,7 +290,9 @@ function generate(op: string, n: number, k: number): string {
       .replace(/\bP0\b/g, "At<P0T, I>")
       .replace(/\bP1\b/g, "At<P1T, I>")
       .replace(/\bP2\b/g, "At<P2T, I>")
-      .replace(/\bLP\b/g, "At<LPT, I>");
+      .replace(/\bLP\b/g, "At<LPT, I>")
+      .replace(/\bLK\b/g, "At<LKT, I>")
+      .replace(/\bV64\b/g, "V64T<At<Val, I>>");
   const nx = `At<Seq, I>`;
   if (o.r) {
     w(`type Loop<H, I, A> = I extends "end" ? [H, A] : LoopR<${sub(o.r)}, I>;`);

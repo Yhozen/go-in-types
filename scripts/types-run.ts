@@ -197,7 +197,6 @@ const header = (from: boolean) => {
     `import type { ${P}S0, ${P}Chunk, ${P}Out, ${P}Err, ${P}Exit, ${P}Exec } from "./prog.d.ts";`,
     ...st.imports,
     "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;",
-    `type R<S> = [${P}Out<S>, ${P}Err<S>, ${P}Exit<S>];`,
     `type S0 = ${st.s0};`,
     `export type { ${P}S0, ${P}Exec };`,
   ];
@@ -216,9 +215,10 @@ export function cliText(from: boolean, chunks: number, drive: number, want: Expe
   for (let k = 1; k <= chunks; k++)
     lines.push(`export const p${k}: "probe" = null! as ${PREFIX}Exit<S${k}>;`);
   const outLine = lines.length + 1;
-  lines.push(`export const out: "probe" = null! as R<S${chunks}>;`);
+  const r = `[${PREFIX}Out<S${chunks}>, ${PREFIX}Err<S${chunks}>, ${PREFIX}Exit<S${chunks}>]`;
+  lines.push(`export const out: "probe" = null! as ${r};`);
   lines.push(
-    `export const ok: Equal<R<S${chunks}>, [${lit(want.stdout)}, ${lit(want.stderr)}, ${want.exit}]> = true;`,
+    `export const ok: Equal<${r}, [${lit(want.stdout)}, ${lit(want.stderr)}, ${want.exit}]> = true;`,
   );
   return { text: lines.join("\n") + "\n", firstStmt, probeLine, outLine };
 }
@@ -226,7 +226,7 @@ export function cliText(from: boolean, chunks: number, drive: number, want: Expe
 export function hoverText(from: boolean, want: Expected) {
   const lines = header(from);
   lines.push(`type Run = ${PREFIX}Exec<S0, "0">;`);
-  lines.push(`type Result = R<Run>;`);
+  lines.push(`type Result = [${PREFIX}Out<Run>, ${PREFIX}Err<Run>, ${PREFIX}Exit<Run>];`);
   lines.push(`type Ok = Equal<Result, [${lit(want.stdout)}, ${lit(want.stderr)}, ${want.exit}]>;`);
   return lines.join("\n") + "\n";
 }
@@ -303,6 +303,12 @@ export const diagnostics = (out: string): Diag[] =>
     code: m[2]!,
     message: m[3]!,
   }));
+/** Errors reported in files other than run.ts (the emitted module, the runtime). */
+export const foreignErrors = (out: string): string[] =>
+  out
+    .split("\n")
+    .filter((l) => /error TS\d+/.test(l) && !/run\.ts\(/.test(l))
+    .map((l) => l.trim().slice(0, 300));
 export const instCount = (out: string) => Number(/Instantiations:\s+(\d+)/.exec(out)?.[1] ?? NaN);
 
 /** A printed type literal (string, number, tuple of those) back to plain values. */
@@ -362,7 +368,7 @@ export function parsePrinted(t: string): any {
     }
     const m = /^-?[\w.]+/.exec(t.slice(i))!;
     i += m[0].length;
-    return /^-?\d/.test(m[0]) ? Number(m[0]) : m[0];
+    return /^-?\d/.test(m[0]) ? Number(m[0]) : { id: m[0] };
   };
   return val();
 }
@@ -477,7 +483,7 @@ async function cliRun(
       break;
     }
   }
-  if (Array.isArray(printed)) [row.stdout, row.stderr, row.exit] = printed;
+  setResult(row, printed);
   if (t.timedOut) return { ...row, kind: "timeout", detail: `killed after ${timeoutSec} s` };
   const stmtOf = (line: number) => line - c.firstStmt + 1;
   const deep = other.find((d) => d.code === "TS2589");
@@ -488,6 +494,9 @@ async function cliRun(
   }
   const full = other.find((d) => d.code === "TS2859");
   if (full) return { ...row, kind: "TS2859", detail: `statement ${stmtOf(full.line)}` };
+  const foreign = foreignErrors(t.out);
+  if (foreign.length > 0 && other.length === 0)
+    return { ...row, kind: "other", detail: `${foreign.length} errors elsewhere; ${foreign[0]}` };
   if (other.length > 0)
     return {
       ...row,
@@ -575,19 +584,28 @@ async function hoverRun(
   }
   const row: TypesResult = { ...base, wallSeconds: h.seconds, peakBytes: h.peakBytes };
   const text = h.text.replace(/^type Result = /, "");
-  if (text === "any" || text === "never" || /\bany\b|\bnever\b/.test(text))
-    return { ...row, kind: "broken state", detail: `hover shows ${text.slice(0, 100)}` };
   let printed: any;
   try {
     printed = parsePrinted(text);
   } catch {
     return { ...row, kind: "other", detail: `unparsable hover ${text.slice(0, 100)}` };
   }
-  [row.stdout, row.stderr, row.exit] = printed;
+  if (!Array.isArray(printed) || printed.some((x) => typeof x === "object"))
+    return { ...row, kind: "broken state", detail: `hover shows ${text.slice(0, 100)}` };
+  setResult(row, printed);
   if (row.exit === -1) return { ...row, kind: "unfinished", detail: "GExec ended unfinished" };
   const got = formatOut(row.stdout ?? "", row.stderr ?? "", row.exit ?? -1);
   if (got !== wantOut) return { ...row, kind: "wrong output", detail: firstDiff(wantOut, got) };
   return { ...row, pass: true, kind: "pass" };
+}
+
+/** The printed [Out, Err, Exit] into the row (elements that are not literals stay unset). */
+function setResult(row: TypesResult, printed: any): void {
+  if (!Array.isArray(printed)) return;
+  const [o, e, x] = printed;
+  if (typeof o === "string") row.stdout = o;
+  if (typeof e === "string") row.stderr = e;
+  if (typeof x === "number") row.exit = x;
 }
 
 export const rowText = (name: string, r: TypesResult): string =>

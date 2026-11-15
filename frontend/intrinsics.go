@@ -115,10 +115,12 @@ var noopInitPkgs = map[string]bool{"gointypes/rt": true}
 // the message without the "runtime error: " prefix; the front end always
 // emits that type and its methods.
 var runtimeCompiled = map[string]bool{
-	"(runtime.errorString).Error":        true,
-	"(runtime.errorString).RuntimeError": true,
-	"(runtime.plainError).Error":         true,
-	"(runtime.plainError).RuntimeError":  true,
+	"(runtime.errorString).Error":           true,
+	"(runtime.errorString).RuntimeError":    true,
+	"(runtime.plainError).Error":            true,
+	"(runtime.plainError).RuntimeError":     true,
+	"(*runtime.PanicNilError).Error":        true,
+	"(*runtime.PanicNilError).RuntimeError": true,
 }
 
 // runtimePkg: packages replaced by the engine runtime. Their functions are

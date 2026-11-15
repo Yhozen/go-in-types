@@ -8,6 +8,8 @@ import {
   add64s,
   add64u,
   and64,
+  big,
+  canonU,
   Exit,
   Iface,
   norm,
@@ -125,9 +127,8 @@ export const intrinsics: Record<string, Intrinsic> = {
   "internal/godebug.setUpdate": noop,
   "internal/godebug.setNewIncNonDefault": noop,
   "internal/godebug.registerMetric": noop,
-  "internal/chacha8rand.block": () => {
-    throw new Trap("internal/chacha8rand.block not implemented");
-  },
+  "internal/chacha8rand.block": (_m, [seed, buf, counter]) =>
+    chacha8block(seed as Ptr, buf as Ptr, counter as number),
   "sync.runtime_canSpin": ret(false),
   "sync.runtime_doSpin": noop,
   "sync.runtime_nanotime": ret(0),
@@ -218,4 +219,47 @@ for (const [suffix, kind] of [
     p.o[p.i] = v;
     return o;
   };
+}
+
+/** Go's internal/chacha8rand block_generic (little-endian): fills *[32]uint64 from the seed. */
+function chacha8block(seed: Ptr, buf: Ptr, counter: number): void {
+  // b[row][col] as uint32 at b[row*4 + col]; buf[k] = b[2k] | b[2k+1] << 32.
+  const b = new Uint32Array(64);
+  const k = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574];
+  for (let r = 0; r < 4; r++) b.fill(k[r]!, r * 4, r * 4 + 4);
+  for (let j = 0; j < 4; j++) {
+    const v = BigInt.asUintN(64, big(seed.o[seed.i + j]));
+    b.fill(Number(v & 0xffffffffn), (4 + 2 * j) * 4, (5 + 2 * j) * 4);
+    b.fill(Number(v >> 32n), (5 + 2 * j) * 4, (6 + 2 * j) * 4);
+  }
+  for (let c = 0; c < 4; c++) b[48 + c] = (counter + c) >>> 0;
+  const x = new Uint32Array(16);
+  const rotl = (v: number, n: number) => ((v << n) | (v >>> (32 - n))) >>> 0;
+  const qr = (a: number, bb: number, c: number, d: number) => {
+    x[a] = (x[a]! + x[bb]!) >>> 0;
+    x[d] = rotl(x[d]! ^ x[a]!, 16);
+    x[c] = (x[c]! + x[d]!) >>> 0;
+    x[bb] = rotl(x[bb]! ^ x[c]!, 12);
+    x[a] = (x[a]! + x[bb]!) >>> 0;
+    x[d] = rotl(x[d]! ^ x[a]!, 8);
+    x[c] = (x[c]! + x[d]!) >>> 0;
+    x[bb] = rotl(x[bb]! ^ x[c]!, 7);
+  };
+  for (let i = 0; i < 4; i++) {
+    for (let r = 0; r < 16; r++) x[r] = b[r * 4 + i]!;
+    for (let round = 0; round < 4; round++) {
+      qr(0, 4, 8, 12);
+      qr(1, 5, 9, 13);
+      qr(2, 6, 10, 14);
+      qr(3, 7, 11, 15);
+      qr(0, 5, 10, 15);
+      qr(1, 6, 11, 12);
+      qr(2, 7, 8, 13);
+      qr(3, 4, 9, 14);
+    }
+    for (let r = 0; r < 16; r++)
+      b[r * 4 + i] = r >= 4 && r < 12 ? (b[r * 4 + i]! + x[r]!) >>> 0 : x[r]!;
+  }
+  for (let j = 0; j < 32; j++)
+    buf.o[buf.i + j] = canonU(BigInt(b[2 * j]!) | (BigInt(b[2 * j + 1]!) << 32n));
 }

@@ -159,11 +159,15 @@ export class Machine {
   args: string[];
 
   prog: Program;
+  /** TypeId of *runtime.PanicNilError, or -1. */
+  panicNilType: number;
   constructor(prog: Program, opts: MachineOptions = {}) {
     this.prog = prog;
     this.types = new Types(prog);
     rt.errorString = this.types.byName.get("runtime.errorString") ?? -1;
     rt.plainError = this.types.byName.get("runtime.plainError") ?? rt.errorString;
+    const pne = this.types.byName.get("runtime.PanicNilError");
+    this.panicNilType = prog.types.findIndex((t) => t.k === "pointer" && t.elem === pne);
     this.dfuncs = new Array(prog.funcs.length);
     this.base = [];
     let n = 0;
@@ -1054,8 +1058,12 @@ class Ctx {
       }
       case "panic": {
         const x = this.r(ins.x);
+        // panic(nil) panics with a *runtime.PanicNilError (Go 1.21+).
+        const pne = this.m.panicNilType;
         return (f) => {
-          throw new GoPanic(f.regs[x]);
+          const v = f.regs[x];
+          if (v === null && pne >= 0) throw new GoPanic(new Iface(pne, new Ptr(ZEROBASE, 0)));
+          throw new GoPanic(v);
         };
       }
       case "defer":

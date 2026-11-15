@@ -295,14 +295,17 @@ func run(patterns []string) (*Program, *frontend) {
 		fe.funcID(f)
 	}
 	// The runtime error types the reference uses for runtime panics
-	// (errorString: "runtime error: " prefix; plainError: none).
+	// (errorString: "runtime error: " prefix; plainError: none;
+	// *PanicNilError: the value of panic(nil)).
 	if rp := sp.ImportedPackage("runtime"); rp != nil {
-		for _, name := range []string{"errorString", "plainError"} {
+		for _, name := range []string{"errorString", "plainError", "PanicNilError"} {
 			if tn, ok := rp.Pkg.Scope().Lookup(name).(*types.TypeName); ok {
-				fe.tt.id(tn.Type())
-				ms := sp.MethodSets.MethodSet(tn.Type())
-				for i := 0; i < ms.Len(); i++ {
-					fe.funcID(sp.MethodValue(ms.At(i)))
+				for _, t := range []types.Type{tn.Type(), types.NewPointer(tn.Type())} {
+					fe.tt.id(t)
+					ms := sp.MethodSets.MethodSet(t)
+					for i := 0; i < ms.Len(); i++ {
+						fe.funcID(sp.MethodValue(ms.At(i)))
+					}
 				}
 			}
 		}

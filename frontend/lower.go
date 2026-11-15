@@ -60,13 +60,13 @@ var instrMapping = [][2]string{
 
 type lowerer struct {
 	addRunDefers bool // emit runDefers before each return (see lowerBody)
-	fe       *frontend
-	f        *ssa.Function
-	regs     map[ssa.Value]int
-	subst    map[ssa.Value]Operand // values replaced by an operand (dropped producers)
-	regTypes []int
-	instrs   []any
-	traps    int
+	fe           *frontend
+	f            *ssa.Function
+	regs         map[ssa.Value]int
+	subst        map[ssa.Value]Operand // values replaced by an operand (dropped producers)
+	regTypes     []int
+	instrs       []any
+	traps        int
 }
 
 func (fe *frontend) lowerBody(f *ssa.Function, out *Func) {

@@ -1,0 +1,11 @@
+true
+true runtime error: panic called with nil argument
+runtime error: true
+?
+true
+true
+true
+deferred
+--- stderr ---
+panic: runtime error: panic called with nil argument
+--- exit 2 ---

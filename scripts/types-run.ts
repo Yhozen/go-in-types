@@ -26,12 +26,14 @@
 //
 // Failure classes (TypesResult.kind): "emit" (the emitter failed), "codec"
 // (the start state could not be built), "TS2589 count" / "TS2589 depth"
-// (told apart by the instantiations of the failing statement: >= 4.9M is the
+// (told apart by the instantiations of the failing statement: >= 4M is the
 // count limit), "TS2859" (relation cache full), "broken state" (a chunk's
 // state is any or never with no diagnostic), "unfinished", "timeout",
-// "wrong output" (first differing line), "other" (any other diagnostic).
+// "unsupported" (the run trapped on "X is not supported in types"), "trap"
+// (any other trap the native run does not hit), "wrong output" (first
+// differing line), "other" (any other diagnostic).
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import type { Program } from "../src/ir/types.ts";
 import { Machine } from "../src/ref/interp.ts";
@@ -102,7 +104,7 @@ export function emit(prog: string, dir: string): void {
   const out = join(dir, "prog.d.ts");
   const srcTime = Math.max(
     statSync(prog).mtimeMs,
-    ...["src/emit", "scripts/emit.ts"].map((p) =>
+    ...["src/emit", "scripts/emit.ts", "src/types"].map((p) =>
       existsSync(join(repo, p)) ? newest(join(repo, p)) : 0,
     ),
   );
@@ -118,12 +120,12 @@ export function emit(prog: string, dir: string): void {
       (r.stderr || r.stdout || String(r.error)).trim().split("\n").slice(-3).join(" | "),
     );
 }
-function newest(p: string): number {
+/** The newest modification time of a file or of any file under a directory. */
+export function newest(p: string): number {
   const st = statSync(p);
   if (!st.isDirectory()) return st.mtimeMs;
   let t = st.mtimeMs;
-  for (const e of spawnSync("ls", [p], { encoding: "utf8" }).stdout.split("\n").filter(Boolean))
-    t = Math.max(t, newest(join(p, e)));
+  for (const e of readdirSync(p)) t = Math.max(t, newest(join(p, e)));
   return t;
 }
 
@@ -523,6 +525,12 @@ async function cliRun(
   }
   const got = formatOut(row.stdout ?? "", row.stderr ?? "", row.exit ?? -1);
   // the Equal check is authoritative; the printed result explains a failure
+  const gap = /trap: (.*?) is not supported in types/.exec(row.stderr ?? "");
+  if (okFailed && gap && !wantOut.includes(gap[0]))
+    return { ...row, kind: "unsupported", detail: gap[1] };
+  const trap = /trap: [^\n]*/.exec(row.stderr ?? "");
+  if (okFailed && trap && !wantOut.includes(trap[0]))
+    return { ...row, kind: "trap", detail: trap[0].slice(0, 200) };
   if (okFailed)
     return {
       ...row,
@@ -560,7 +568,10 @@ async function classify2589(
   if (a.timedOut || b.timedOut)
     return { kind: "TS2589 (unclassified)", detail: `statement ${k}; the rerun timed out` };
   const cost = instCount(b.out) - instCount(a.out);
-  return cost >= 4_900_000
+  // a statement stopped by the count limit has counted most of its 5M before
+  // the error (the CLI also zeroes the counter at a type node's first
+  // resolution, so the difference can fall short of 5M)
+  return cost >= 4_000_000
     ? {
         kind: "TS2589 count",
         detail: `statement ${k} costs ${(cost / 1e6).toFixed(1)}M instantiations`,

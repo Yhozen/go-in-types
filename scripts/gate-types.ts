@@ -25,7 +25,7 @@ import { corpus, corpusDir, ensureOverlay, native, pool } from "./gen-go-out.ts"
 import { formatOut } from "./go-out.ts";
 import { generate } from "./fuzz-gen.ts";
 import { frontend, reference as refRun, StageError } from "./pipeline.ts";
-import { loadProg, repo, rowText, runTypes, type TypesResult } from "./types-run.ts";
+import { loadProg, newest, repo, rowText, runTypes, type TypesResult } from "./types-run.ts";
 
 const argv = process.argv.slice(2);
 const opt = (k: string) => (argv.includes(k) ? argv[argv.indexOf(k) + 1] : undefined);
@@ -64,10 +64,11 @@ export interface Row extends Partial<TypesResult> {
   detail?: string;
 }
 
+/** Newest file of what a run's result depends on (the emitter, the runtime, the state codec). */
 const emitterTime = () =>
   Math.max(
-    ...["src/emit", "scripts/emit.ts", "src/types", "scripts/types-run.ts"].map((p) =>
-      existsSync(join(repo, p)) ? statSync(join(repo, p)).mtimeMs : 0,
+    ...["src/emit", "scripts/emit.ts", "src/types"].map((p) =>
+      existsSync(join(repo, p)) ? newest(join(repo, p)) : 0,
     ),
   );
 

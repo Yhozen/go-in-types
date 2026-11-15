@@ -5,17 +5,18 @@ the front end), so native runs and the engine execute the same Go code.
 `node overlay/gen.ts` writes the machine-specific (absolute paths,
 git-ignored) `overlay/tests.json` and `overlay/tsgo.json`.
 
-| dir                 | replaces                                                                  | why                                                                                                     |
-| ------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `std/gointypes/rt`  | (new std package)                                                         | `Write(fd, b)`, `Exit(code)`: the program's only I/O; front-end intrinsics                              |
-| `std/fmt`           | `print.go`, `scan.go`                                                     | no reflect, no `sync.Pool`, no `os`; Print* write to fd 1 via rt                                        |
-| `std/errors`        | `wrap.go`                                                                 | no `internal/reflectlite` (`Is` exact; `As` only `*error`)                                              |
-| `std/sync`          | all but `oncefunc.go`                                                     | single-threaded; blocking = panic "deadlock"; `sync.Map` is a slice                                     |
-| `std/math`          | `*_asm.go`, `bits.go`                                                     | `haveArch* = false`: pure-Go floor/ceil/trunc/min/max/exp/exp2/hypot/log; `IsNaN`/`IsInf` as bit tests  |
-| `tsgo/`             | typescript-go files (paths relative to its module root)                   | tsgo config: harness main, no reflect/regexp/testing on the check path                                  |
-| `tsgo/internal/ast` | `ast_generated.go`, `utilities.go` (generated: `node overlay/gen-ast.ts`) | `ForEachChild` and kind predicates as tables indexed by `Kind`, not switches (comparison chains in SSA) |
-| `tsgo-std/`         | `syscall/rlimit.go`, `testing/iotest/logger.go`                           | tsgo config only: no prlimit in `syscall.init`; no `log` (and `os`)                                     |
-| `xxh3/`             | `github.com/zeebo/xxh3`                                                   | same API, no hashing: interns the bytes                                                                 |
+| dir                     | replaces                                                                  | why                                                                                                        |
+| ----------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `std/gointypes/rt`      | (new std package)                                                         | `Write(fd, b)`, `Exit(code)`: the program's only I/O; front-end intrinsics                                 |
+| `std/fmt`               | `print.go`, `scan.go`                                                     | no reflect, no `sync.Pool`, no `os`; Print* write to fd 1 via rt                                           |
+| `std/errors`            | `wrap.go`                                                                 | no `internal/reflectlite` (`Is` exact; `As` only `*error`)                                                 |
+| `std/sync`              | all but `oncefunc.go`                                                     | single-threaded; blocking = panic "deadlock"; `sync.Map` is a slice                                        |
+| `std/math`              | `*_asm.go`, `bits.go`                                                     | `haveArch* = false`: pure-Go floor/ceil/trunc/min/max/exp/exp2/hypot/log; `IsNaN`/`IsInf` as bit tests     |
+| `tsgo/`                 | typescript-go files (paths relative to its module root)                   | tsgo config: harness main, no reflect/regexp/testing on the check path                                     |
+| `tsgo/internal/ast`     | `ast_generated.go`, `utilities.go` (generated: `node overlay/gen-ast.ts`) | `ForEachChild` and kind predicates as tables indexed by `Kind`, not switches (comparison chains in SSA)    |
+| `tsgo/internal/scanner` | `scanner.go`                                                              | `Scan` takes ASCII identifier starts straight to its default branch; `scanASCIIWhile` predicates as tables |
+| `tsgo-std/`             | `syscall/rlimit.go`, `testing/iotest/logger.go`                           | tsgo config only: no prlimit in `syscall.init`; no `log` (and `os`)                                        |
+| `xxh3/`                 | `github.com/zeebo/xxh3`                                                   | same API, no hashing: interns the bytes                                                                    |
 
 The engine's tsgo program has no `os` and no `reflect.TypeFor` in package
 initializers: the harness main is split by build tag (`main_os.go` native,

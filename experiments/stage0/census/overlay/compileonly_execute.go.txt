@@ -1,0 +1,24 @@
+// Census overlay: a new file in internal/execute exposing performCompilation
+// for a plain `tsgo [options] files...` run (no build mode, watch,
+// incremental, --init, --help, --showConfig or tsconfig.json lookup).
+package execute
+
+import (
+	"github.com/microsoft/typescript-go/internal/execute/tsc"
+	"github.com/microsoft/typescript-go/internal/tsoptions"
+)
+
+func CensusCompile(sys tsc.System, args []string) tsc.CommandLineResult {
+	commandLine := tsoptions.ParseCommandLine(args, sys)
+	locale := commandLine.Locale()
+	reportDiagnostic := tsc.CreateDiagnosticReporter(sys, sys.Writer(), locale, commandLine.CompilerOptions())
+	if len(commandLine.Errors) > 0 {
+		for _, e := range commandLine.Errors {
+			reportDiagnostic(e)
+		}
+		return tsc.CommandLineResult{Status: tsc.ExitStatusDiagnosticsPresent_OutputsSkipped}
+	}
+	reportErrorSummary := tsc.CreateReportErrorSummary(sys, locale, commandLine.CompilerOptions())
+	var compileTimes tsc.CompileTimes
+	return performCompilation(sys, commandLine, reportDiagnostic, reportErrorSummary, &tsc.ExtendedConfigCache{}, &compileTimes, nil)
+}

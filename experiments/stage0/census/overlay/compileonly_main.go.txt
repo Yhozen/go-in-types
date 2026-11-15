@@ -1,0 +1,16 @@
+// Census overlay for cmd/tsgo/main.go: the command-line compile path only
+// (no --lsp, --api, --build, --watch, signal handling). Not part of the build
+// of the census tool; swapped in with `go build -overlay` / packages.Config.Overlay.
+package main
+
+import (
+	"os"
+
+	"github.com/microsoft/typescript-go/internal/core"
+	"github.com/microsoft/typescript-go/internal/execute"
+)
+
+func main() {
+	core.ApplyDebugStackLimit()
+	os.Exit(int(execute.CensusCompile(newSystem(), os.Args[1:]).Status))
+}

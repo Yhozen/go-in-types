@@ -1,0 +1,2 @@
+// Census overlay: an empty file in place of an LSP/API-only file of cmd/tsgo.
+package main

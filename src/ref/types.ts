@@ -121,10 +121,11 @@ export class Types {
     if (ti.u.k === "array") {
       const e = this.slotTypes(ti.u.elem);
       r = [];
-      for (let i = 0; i < ti.u.len; i++) r.push(...e);
+      // (no spread: arrays can have millions of slots)
+      for (let i = 0; i < ti.u.len; i++) for (const x of e) r.push(x);
     } else if (ti.u.k === "struct") {
       r = [];
-      for (const f of ti.u.fields) r.push(...this.slotTypes(f.type));
+      for (const f of ti.u.fields) for (const x of this.slotTypes(f.type)) r.push(x);
     } else r = [id];
     this.slotTypesC[id] = r;
     return r;

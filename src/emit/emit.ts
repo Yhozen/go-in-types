@@ -289,6 +289,8 @@ class Emitter {
     return nm;
   }
   zeroText(t: number): string {
+    // too big to hold in types (only reached through nil pointers)
+    if (this.info(t).slots > BIG_SLOTS) return "never";
     return `[${this.T.slotTypes(t)
       .map((s) => this.scalarZero(s))
       .join(", ")}]`;
@@ -310,6 +312,7 @@ class Emitter {
     return nm;
   }
   zeroObjText(t: number): string {
+    if (this.info(t).slots > BIG_SLOTS) return "never";
     const z = this.T.slotTypes(t).map((s) => this.scalarZero(s));
     return `Hp.Flat<${z.join(", ")}>`;
   }
@@ -349,12 +352,20 @@ class Emitter {
   keyMode(t: number): string {
     return this.info(t).k === "int" ? '"i"' : '"s"';
   }
-  canon(v: string, t: number): string {
+  /**
+   * Canonical key of v; `nan` is the key text of a NaN (unique per insert:
+   * `n<seq>`; "n" for lookups, which never match). null: unsupported.
+   */
+  canon(v: string, t: number, nan: string): string | null {
     const ti = this.info(t);
     switch (ti.k) {
       case "int":
       case "string":
         return v;
+      case "float":
+        return `R.KeyFloat<${v}, "${ti.fbits}", ${nan}>`;
+      case "interface":
+        return `R.IKey<P, ${v}, ${nan}>`;
       case "bool":
         return `Mp.KeyBool<${v}>`;
       case "pointer":
@@ -370,12 +381,16 @@ class Emitter {
           if (k === "bool") return `\${Mp.KeyBool<${x}>}`;
           if (k === "pointer" || k === "chan") return `\${Mp.KeyPtr<${x}>}`;
           if (k === "int") return `\${${x} & string}`;
-          throw new Error(`map key slot kind ${k}`);
+          if (k === "interface") return `\${R.IKey<P, ${x}, ${nan}> & string}`;
+          if (k === "float")
+            return `\${R.KeyFloat<${x}, "${this.info(s).fbits}", ${nan}> & string}`;
+          return null;
         });
+        if (parts.includes(null)) return null;
         return "`" + parts.join(",") + "`";
       }
       default:
-        throw new Error(`map key kind ${ti.k}`);
+        return null;
     }
   }
 
@@ -596,6 +611,8 @@ class FuncEmitter {
   }
 }
 
+/** Aggregates with more slots have no zero value in types. */
+const BIG_SLOTS = 1 << 16;
 const BARE = "F extends string ? ";
 
 /** Builds one block's segments. */
@@ -628,6 +645,23 @@ class SegB {
     this.e = fe.e;
     this.name = name;
     this.params = params;
+  }
+
+  /** The "hash of unhashable type" checks of a key holding interfaces. */
+  keyCk(k: string, t: number): void {
+    const ti = this.e.info(t);
+    const ck = (x: string) => this.check(`R.KeyOk<R.IKey<P, ${x}, "n">>`, (r) => this.pnH(r));
+    if (ti.k === "interface") ck(k);
+    else if (ti.k === "struct" || ti.k === "array")
+      this.e.T.slotTypes(t).forEach((s, i) => {
+        if (this.e.info(s).k === "interface") ck(`${k}[${i}]`);
+      });
+  }
+
+  keyTrap(t: number): void {
+    this.end(
+      `R.Trap<${this.H}, ${this.K}, ${this.X}, ${strLit(`trap: map keys of kind ${this.e.info(t).k} are not supported in types (in ${this.fe.f.name})\n`)}>`,
+    );
   }
 
   isChacha(ins: Instr): boolean {
@@ -1112,8 +1146,10 @@ class SegB {
         if (mt.k === "string") throw new Error("lookup on string");
         const m = this.atom(ins.x);
         const k = this.atom(ins.index);
+        const c = this.e.canon(k, mt.key, '"n"');
+        if (c === null) return this.keyTrap(mt.key);
+        this.keyCk(k, mt.key);
         const h = this.heapRead();
-        const c = this.e.canon(k, mt.key);
         const z = this.e.zero(mt.elem);
         if (ins.commaOk) this.setReg(ins.dst, `Mp.MapLookupOk<${h}, ${m}, ${c}, ${z}>`);
         else this.setReg(ins.dst, `Mp.MapLookup<${h}, ${m}, ${c}, ${z}>`);
@@ -1125,8 +1161,12 @@ class SegB {
         const k = this.atom(ins.key);
         const v = this.val(ins.val).t;
         this.check(`Mp.MapUpdateCk<${m}>`, (r) => this.pnIPlain(r));
-        const c = this.e.canon(k, mt.key);
-        this.heapWrite((h) => `Mp.MapUpdate<${h}, ${m}, ${c}, ${k}, ${v}>`);
+        if (this.e.canon(k, mt.key, '"n"') === null) return this.keyTrap(mt.key);
+        this.keyCk(k, mt.key);
+        this.heapWrite((h) => {
+          const c = this.e.canon(k, mt.key, `\`n\${R.MapSeq<${h}, ${m}> & string}\``)!;
+          return `Mp.MapUpdate<${h}, ${m}, ${c}, ${k}, ${v}>`;
+        });
         return;
       }
       case "makeChan":
@@ -1628,7 +1668,9 @@ class SegB {
         const mt = u0 as any;
         const m = this.atom(ins.args[0]!);
         const k = this.atom(ins.args[1]!);
-        const c = e.canon(k, mt.key);
+        const c = e.canon(k, mt.key, '"n"');
+        if (c === null) return this.keyTrap(mt.key);
+        this.keyCk(k, mt.key);
         this.heapWrite((h) => `Mp.MapDelete<${h}, ${m}, ${c}>`);
         return;
       }
@@ -1689,8 +1731,8 @@ class SegB {
         return set(p, { atom: true });
       }
       case "deferstack":
-        // the running frame's depth: the number of frames below it
-        return set(`R.KLen<${this.K}, "">`);
+        // the running frame's stack index (frames below it, as an int)
+        return set(`R.StackIx<${this.K}>`);
     }
     throw new Error("unknown builtin " + name);
   }

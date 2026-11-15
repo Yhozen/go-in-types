@@ -910,6 +910,8 @@ export function progTables(prog: Program, dyn: number[], ifaces: number[], name 
 /** The equality kind `Eq` takes for values of type t (text), or `"unc"`. */
 export function eqKind(ti: TypeInfo, t: number): string {
   const T = ti.T;
+  // an aggregate too big to hold in types is never compared there
+  if (T.info[t]!.slots > 1 << 16) return lit("unc");
   if (T.eq(t) === null) return lit("unc");
   const one = (s: number): string => {
     const k = T.info[s]!;

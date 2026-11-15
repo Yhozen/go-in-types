@@ -164,18 +164,82 @@ type RetC<P extends ProgB, H, C, K, X, F, V> =
 
 /** Records of the panic chain: [V, Recovered, Repanicked, Depth, Serial, Str]. */
 export type KLen<K, A extends string> = K extends null ? A : KLen<I1<K>, `${A}x`>;
+/** The canonical map key of a float's bits V (Fb "32"/"64"): -0 is 0, a NaN is Nan. */
+export type KeyFloat<V, Fb, Nan> = Fb extends "64"
+  ? V extends "0000000000000008"
+    ? "0"
+    : I.And<"u64", V & string, "0000000000000ff7"> extends "0000000000000ff7"
+      ? I.And<"u64", V & string, "fffffffffffff0"> extends "0"
+        ? V
+        : Nan
+      : V
+  : V extends "00000008"
+    ? "0"
+    : I.And<"u32", V & string, "000008f7"> extends "000008f7"
+      ? I.And<"u32", V & string, "fffff7"> extends "0"
+        ? V
+        : Nan
+      : V;
 /**
- * K with Rec pushed onto the defer list of the frame at depth Dx (a
- * deferstack value: the number of frames below it), for range-over-func.
+ * The canonical map key of interface value V (P the program tables, Nan the
+ * NaN key): `${T}|${form}` by T's equality kind, or the "hash of unhashable
+ * type" panic (Hp.Panic).
  */
-export type DeferAt<K, Dx, Rec> =
-  KLen<K, ""> extends `${Dx & string}x${infer J extends string}` ? DeferAtJ<K, J, Rec> : K;
-/** [K, D] after a defer onto frame Dx: the running frame (defer list D) when it is at depth Dx. */
-export type DeferOn<K, D, Dx, Rec> =
-  KLen<K, ""> extends Dx ? Mk2<K, Cons<Rec, D>> : Mk2<DeferAt<K, Dx, Rec>, D>;
-type DeferAtJ<K, J, Rec> = J extends `x${infer J2}`
-  ? Cons<I0<K>, DeferAtJ<I1<K>, J2, Rec>>
-  : Cons<Ct<I0<I0<K>>, I1<I0<K>>, I2<I0<K>>, Cons<Rec, I3<I0<K>>>, I4<I0<K>>, I5<I0<K>>>, I1<K>>;
+export type IKey<P, V, Nan> = V extends null
+  ? "nil"
+  : Look<P["eqk" & keyof P], I0<V>> extends infer k
+    ? k extends "unc"
+      ? Hp.Panic<"e", [`hash of unhashable type ${Look<P["names" & keyof P], I0<V>> & string}`]>
+      : KeyK<P, I1<V>, k, Nan> extends infer f
+        ? f extends string
+          ? `${I0<V> & string}|${f}`
+          : f
+        : never
+    : never;
+type KeyK<P, V, K, Nan> = K extends "="
+  ? V extends string
+    ? `${Len<V>}:${V}`
+    : V extends boolean
+      ? V extends true
+        ? "t"
+        : "f"
+      : V extends null
+        ? "nil"
+        : `${I0<V> & string}.${I1<V> & string}`
+  : K extends "f64"
+    ? KeyFloat<V, "64", Nan>
+    : K extends "f32"
+      ? KeyFloat<V, "32", Nan>
+      : K extends "i"
+        ? IKey<P, V, Nan>
+        : KeyAgg<P, V, K, Nan, "">;
+type KeyAgg<P, V, K, Nan, Acc extends string> = K extends [infer k, ...infer KR]
+  ? V extends [infer v, ...infer VR]
+    ? KeyK<P, v, k, Nan> extends infer f
+      ? f extends string
+        ? KeyAgg<P, VR, KR, Nan, `${Acc},${f}`>
+        : f
+      : never
+    : never
+  : Acc;
+type Len<S> = S extends `${string}${infer R}` ? `x${Len<R>}` : "";
+/** true, or the Hp.Panic a key canonicalisation produced. */
+export type KeyOk<C> = C extends string ? true : C;
+/** The sequence number the next new key of map M gets. */
+export type MapSeq<H, M> = Hp.GetObj<H, M>["1" & keyof Hp.GetObj<H, M>];
+/** A frame's stack index (DESIGN.md deferstack): KLen - 1 as an int, for the frame running on K. */
+export type StackIx<K> = KIx<K, "f">;
+type KIx<K, A extends string> = K extends null ? A : KIx<I1<K>, I.Add<"i64", A, "1">>;
+/** K with Rec pushed onto the defer list of the frame at stack index Ix (range-over-func). */
+export type DeferAt<K, Ix, Rec> = DeferAtW<K, Ix, Rec, StackIx<I1<K>>>;
+type DeferAtW<K, Ix, Rec, Cur> = K extends null
+  ? null
+  : Cur extends Ix
+    ? Cons<Ct<I0<I0<K>>, I1<I0<K>>, I2<I0<K>>, Cons<Rec, I3<I0<K>>>, I4<I0<K>>, I5<I0<K>>>, I1<K>>
+    : Cons<I0<K>, DeferAtW<I1<K>, Ix, Rec, I.Sub<"i64", Cur & string, "1">>>;
+/** [K, D] after a defer onto frame Ix: the running frame (defer list D) when it is Ix. */
+export type DeferOn<K, D, Ix, Rec> =
+  StackIx<K> extends Ix ? Mk2<K, Cons<Rec, D>> : Mk2<DeferAt<K, Ix, Rec>, D>;
 type LtX<A, B> = B extends `${A & string}x${string}` ? true : false;
 type XPn<X, Pn> = Xt<I0<X>, I1<X>, Pn, I3<X>>;
 /** X with stderr extended by S. */

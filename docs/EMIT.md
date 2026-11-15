@@ -195,9 +195,10 @@ estimates, ~1M instantiations. Hovers draw a fresh fuel literal from the
 pool (`fuel.gen.ts`) before every chunk (`GExec`).
 
 A chain of blocks comparing one int or string register with constants
-(go/ssa's `switch`) is one dispatch: the value indexes an interface of
-case entries (`SW<fid>_<blk>`, each `sw…` jumps to its case), the default
-jumps on.
+(go/ssa's `switch`) is one dispatch: the value indexes a table
+(`SW<fid>_<blk>`) of case entry keys and the segment yields to that entry
+(`s<fid>_<blk>`, one trampoline step; it jumps to the case with the edge
+moves, `A` holding the live values); the default jumps on.
 
 ## Changes
 

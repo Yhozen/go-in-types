@@ -44,13 +44,16 @@ function frontendBinary(): Promise<string> {
   return feBin;
 }
 
+/** gointypes selects the bodyless gointypes/rt intrinsics (no os in the program). */
+const TAGS = ["-tags", "purego,gointypes"];
+
 /** Compiles a Go file to IR; returns the prog.json path. */
 export async function frontend(file: string, outDir: string): Promise<string> {
   mkdirSync(outDir, { recursive: true });
   const out = join(outDir, basename(file).replace(/\.go$/, ".json"));
   try {
     if (existsSync(join(repo, "scripts/frontend.ts"))) {
-      await run("node", [join(repo, "scripts/frontend.ts"), file, "-o", out, "--config", "tests"], {
+      await run("node", [join(repo, "scripts/frontend.ts"), file, "-o", out, "--config", "tests", "--", ...TAGS], {
         cwd: repo,
         maxBuffer: 64 << 20,
       });
@@ -63,6 +66,7 @@ export async function frontend(file: string, outDir: string): Promise<string> {
           dirname(file),
           "-overlay",
           join(repo, "overlay/tests.json"),
+          ...TAGS,
           "-o",
           out,
           basename(file),

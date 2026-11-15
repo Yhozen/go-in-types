@@ -1,0 +1,30 @@
+42|   42|42   |00042|+42| 42|bee|0xbee|10|010|1010
+go|        go|go        |"go\n"|go|676f|676F|67 6F
+true|false| true
+G|'G'|U+0047|U+4E16 '世'
+     7|7     |ab|x   
+S<1>|S<2>|3
+E!|E!|"E!"
+F[v 5 0 false]|F[d 6 6 true]
+[a b] [] [1 x <nil> S<4>]
+map[a:2 z:1] map[1:a 3:c]
+int string float64 []int <nil>
+%!d(string=str) %!s(int=5)
+%!d(MISSING)
+1 2
+%!(EXTRA int=3)%!!(int=1)|%|%!z(MISSING)
+2 1
+a1 2bc3 x 1
+
+outer: E! true true
+two: E! + n true
+count
+6 <nil>
+-5 7 -9223372036854775808 18446744073709551615
+-ff 01AB ff
+  3.14|1.235e+03|1.234e-06|1.23e+06|+2.2
+-003.142|0x1p+00|0|2
+raw [114 97 119]
+["a b" "c"]
+dead0100000000000000000000000000 [222 173 1 0 0 0 0 0 0 0 0 0 0 0 0 0] [16]uint8
+--- exit 0 ---

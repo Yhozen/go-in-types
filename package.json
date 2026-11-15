@@ -9,7 +9,10 @@
     "test": "vp test",
     "typecheck": "tsrs --noEmit --fast",
     "check": "vp check && tsrs --noEmit --fast",
-    "prepare": "vp config"
+    "prepare": "vp config",
+    "gen:overlay": "node overlay/gen.ts",
+    "gen:go-out": "node scripts/gen-go-out.ts",
+    "gate:ref": "node scripts/gate-ref.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

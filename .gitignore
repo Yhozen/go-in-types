@@ -5,3 +5,5 @@ node_modules
 coverage
 *.tsbuildinfo
 .run
+overlay/*.json
+overlay/*.go.mod

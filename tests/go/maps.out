@@ -1,0 +1,11 @@
+map[a:3 b:2 c:1] 3
+0 false
+[b c]
+2 [1 2] true
+true false
+2 x y
+0 0
+37 9086904
+0
+recovered: assignment to entry in nil map
+--- exit 0 ---

@@ -36,6 +36,7 @@ var (
 	flagOut     = flag.String("out", "out", "output directory")
 	flagName    = flag.String("name", "census", "output file prefix")
 	flagWhy     = flag.String("why", "", "print a VTA call path from main to the first function whose name contains this")
+	flagFrom    = flag.String("from", "", "with -vta: report reflection reachable from this function only (e.g. github.com/microsoft/typescript-go/cmd/tsgo.check)")
 	flagFns     = flag.Bool("functions", false, "write <name>.functions.json")
 )
 
@@ -129,6 +130,9 @@ func main() {
 			why(vtaCG, roots, *flagWhy)
 		}
 		log.Printf("VTA: %d reachable functions (%s)", len(vtaReach), time.Since(t0))
+		if *flagFrom != "" {
+			reflectFrom(vtaCG, funcs, *flagFrom)
+		}
 	}
 
 	var cov *Coverage
@@ -370,4 +374,48 @@ func why(cg *callgraph.Graph, roots []*ssa.Function, sub string) {
 		}
 	}
 	log.Printf("why: %q not reachable", sub)
+}
+
+// reflectFrom prints the reflection (reflect, internal/reflectlite)
+// reachable by VTA from one function, and every call edge into it from
+// outside, with a path from the function to the caller.
+func reflectFrom(cg *callgraph.Graph, all map[*ssa.Function]bool, name string) {
+	var from *ssa.Function
+	for f := range all {
+		if f.String() == name {
+			from = f
+		}
+	}
+	if from == nil {
+		log.Fatalf("from: %s not reachable", name)
+	}
+	reach := reachableFrom(cg, []*ssa.Function{from})
+	isReflect := func(f *ssa.Function) bool {
+		p := pkgOf(f)
+		return p == "reflect" || p == "internal/reflectlite"
+	}
+	n := 0
+	edges := map[string]bool{}
+	for f := range reach {
+		if isReflect(f) {
+			n++
+			continue
+		}
+		if node := cg.Nodes[f]; node != nil {
+			for _, e := range node.Out {
+				if isReflect(e.Callee.Func) {
+					edges[f.String()+" -> "+e.Callee.Func.String()] = true
+				}
+			}
+		}
+	}
+	log.Printf("from %s: %d functions reachable, %d of them in reflect/internal/reflectlite, %d call edges into them", name, len(reach), n, len(edges))
+	keys := make([]string, 0, len(edges))
+	for k := range edges {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		log.Printf("  edge: %s", k)
+	}
 }

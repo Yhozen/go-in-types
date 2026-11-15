@@ -1,0 +1,377 @@
+diff --git a/crates/tsrs_checker/src/checker_09.rs b/crates/tsrs_checker/src/checker_09.rs
+index fe51a3a..da8f4ae 100644
+--- a/crates/tsrs_checker/src/checker_09.rs
++++ b/crates/tsrs_checker/src/checker_09.rs
+@@ -924,6 +924,7 @@ fn get_relation_key_worker(
+     intersection_state: IntersectionState,
+     ignore_constraints: bool,
+ ) -> (RelationKey, bool) {
++    crate::heapdiag::add(crate::heapdiag::C::relation_key_worker, 1);
+     let mut b = KeyBuilder::default();
+ 
+     let constrained = if is_type_reference_with_generic_arguments(c, source)
+@@ -947,6 +948,7 @@ fn get_relation_key_worker(
+ 
+ // checker.go:17980
+ fn is_type_reference_with_generic_arguments(c: &mut Checker, t: P<Type>) -> bool {
++    crate::heapdiag::add(crate::heapdiag::C::relation_key_generic_visits, 1);
+     is_non_deferred_type_reference(t)
+         && c.get_type_arguments(t).iter().any(|&t| {
+             t.flags().intersects(TypeFlags::TypeParameter)
+diff --git a/crates/tsrs_checker/src/checker_11.rs b/crates/tsrs_checker/src/checker_11.rs
+index 8731b10..e7a1dcc 100644
+--- a/crates/tsrs_checker/src/checker_11.rs
++++ b/crates/tsrs_checker/src/checker_11.rs
+@@ -1370,6 +1370,30 @@ impl Checker {
+         self.total_instantiation_count += 1;
+         self.instantiation_count += 1;
+         crate::sitecount::hit("instantiation", type_kind_label(t.flags(), t.object_flags()));
++        if crate::heapdiag::on() {
++            use crate::heapdiag::{C, add};
++            add(C::inst_total, 1);
++            if m == self.permissive_mapper {
++                add(C::inst_permissive, 1);
++            } else if m == self.restrictive_mapper {
++                add(C::inst_restrictive, 1);
++            }
++            let label: String = match t.alias().and_then(|a| a.symbol()) {
++                Some(s) => format!("alias {}", s.name()),
++                None if t.flags().intersects(TypeFlags::Conditional) => {
++                    match t.as_conditional_type().root.get().and_then(|r| r.alias.get()).and_then(|a| a.symbol()) {
++                        Some(s) => format!("cond-of {}", s.name()),
++                        None => "cond (no alias)".to_string(),
++                    }
++                }
++                None => {
++                    let deferred = t.object_flags().intersects(ObjectFlags::Reference)
++                        && t.as_type_reference().node.get().is_some();
++                    format!("{}{}", type_kind_label(t.flags(), t.object_flags()), if deferred { " (deferred ref)" } else { "" })
++                }
++            };
++            crate::heapdiag::inst_label(&label);
++        }
+         self.instantiation_stack.push(t);
+         let result = self.instantiate_type_worker(t, m, alias);
+         match key {
+@@ -1525,6 +1549,7 @@ impl Checker {
+         if object_flags.intersects(ObjectFlags::CouldContainTypeVariablesComputed) {
+             return object_flags.intersects(ObjectFlags::CouldContainTypeVariables);
+         }
++        crate::heapdiag::add(crate::heapdiag::C::could_contain_computed, 1);
+         let result = t.flags().intersects(TypeFlags::Instantiable)
+             || t.flags().intersects(TypeFlags::Object)
+                 && !Self::is_non_generic_top_level_type(t)
+diff --git a/crates/tsrs_checker/src/checker_12.rs b/crates/tsrs_checker/src/checker_12.rs
+index d6a7ea5..c0f4174 100644
+--- a/crates/tsrs_checker/src/checker_12.rs
++++ b/crates/tsrs_checker/src/checker_12.rs
+@@ -1289,6 +1289,7 @@ impl Checker {
+         );
+         let census_span =
+             self.census_begin(crate::workcensus::Cat::Cond, || crate::workcensus::CKey::Root(root));
++        crate::heapdiag::add(crate::heapdiag::C::conditional_resolutions, 1);
+         let result = self.get_conditional_type_worker(root, mapper, for_constraint, alias);
+         if let Some(t) = self.census_end(census_span) {
+             let never = (result == self.never_type) as u64;
+@@ -1429,6 +1430,10 @@ impl Checker {
+             } else {
+                 extends_type
+             };
++            if std::env::var("TSRS_HEAPDIAG_TRACE").is_ok() && !root.infer_type_parameters.get().is_empty() {
++                let ied = self.is_deferred_type(inferred_extends_type, check_tuples);
++                eprintln!("cond check={} cdef={} ext={} edef={} anyunk={}", type_kind_label(check_type.flags(), check_type.object_flags()), check_type_deferred, type_kind_label(inferred_extends_type.flags(), inferred_extends_type.object_flags()), ied, inferred_extends_type.flags().intersects(TypeFlags::AnyOrUnknown));
++            }
+             // We attempt to resolve the conditional type only when the check and extends types are non-generic
+             if !check_type_deferred && !self.is_deferred_type(inferred_extends_type, check_tuples) {
+                 // Return falseType for a definitely false extends check. We check an instantiations of the two
+@@ -1625,10 +1630,17 @@ impl Checker {
+             return t;
+         }
+         let key = CachedTypeKey { kind: CachedTypeKind::PermissiveInstantiation, type_id: t.id };
++        crate::heapdiag::add(crate::heapdiag::C::permissive_calls, 1);
+         if let Some(&cached) = self.cached_types.get(&key) {
+             return cached;
+         }
++        crate::heapdiag::add(crate::heapdiag::C::permissive_misses, 1);
++        let before = self.total_instantiation_count;
+         let result = self.instantiate_type(t, Some(self.permissive_mapper));
++        if std::env::var("TSRS_HEAPDIAG_TRACE").is_ok() {
++            let cc = self.could_contain_type_variables(t);
++            eprintln!("permissive id={} kind={} could_contain={} insts={} same={}", t.id.0, type_kind_label(t.flags(), t.object_flags()), cc, self.total_instantiation_count - before, result == t);
++        }
+         self.cached_types.insert(key, result);
+         result
+     }
+@@ -1639,9 +1651,11 @@ impl Checker {
+             return t;
+         }
+         let key = CachedTypeKey { kind: CachedTypeKind::RestrictiveInstantiation, type_id: t.id };
++        crate::heapdiag::add(crate::heapdiag::C::restrictive_calls, 1);
+         if let Some(&cached) = self.cached_types.get(&key) {
+             return cached;
+         }
++        crate::heapdiag::add(crate::heapdiag::C::restrictive_misses, 1);
+         let result = self.instantiate_type(t, Some(self.restrictive_mapper));
+         self.cached_types.insert(key, result);
+         // We set the following so we don't attempt to set the restrictive instance of a restrictive instance
+@@ -2601,8 +2615,10 @@ impl Checker {
+     ) -> P<Type> {
+         let intf = target.as_interface_type();
+         if let Some(t) = intf.instantiations.get(type_arguments) {
++            crate::heapdiag::add(crate::heapdiag::C::type_reference_hits, 1);
+             return t;
+         }
++        crate::heapdiag::add(crate::heapdiag::C::type_reference_created, 1);
+         let propagating_flags =
+             Self::get_propagating_flags_of_types(type_arguments, TypeFlags::None);
+         let t = self.new_object_type(
+@@ -2634,6 +2650,7 @@ impl Checker {
+                 a.type_arguments.set(alloc_vec(type_arguments));
+             }
+         }
++        crate::heapdiag::add(crate::heapdiag::C::deferred_reference_created, 1);
+         let t = self.new_object_type(ObjectFlags::Reference, target.symbol());
+         t.set_alias(alias);
+         let d = t.as_type_reference();
+diff --git a/crates/tsrs_checker/src/heapdiag.rs b/crates/tsrs_checker/src/heapdiag.rs
+new file mode 100644
+index 0000000..35c72c5
+--- /dev/null
++++ b/crates/tsrs_checker/src/heapdiag.rs
+@@ -0,0 +1,95 @@
++//! go-in-types stage 0 diagnosis counters (`TSRS_HEAPDIAG=1`, printed on stderr at exit). Diagnosis only.
++//!
++//! Plain counters of the walks suspected of growing with a type-level heap, plus instantiations by the alias (or
++//! type kind) of the type instantiated and by the mapper kind (permissive / restrictive / other).
++use rustc_hash::FxHashMap;
++use std::sync::Mutex;
++use std::sync::OnceLock;
++use std::sync::atomic::{AtomicU64, Ordering};
++
++pub fn on() -> bool {
++    static ON: OnceLock<bool> = OnceLock::new();
++    *ON.get_or_init(|| std::env::var("TSRS_HEAPDIAG").is_ok_and(|v| !v.is_empty() && v != "0"))
++}
++
++macro_rules! counters {
++    ($($name:ident),* $(,)?) => {
++        #[allow(non_camel_case_types)]
++        #[derive(Clone, Copy)]
++        #[repr(usize)]
++        pub enum C { $($name),* }
++        const NAMES: &[&str] = &[$(stringify!($name)),*];
++    };
++}
++counters!(
++    inst_total,
++    inst_permissive,
++    inst_restrictive,
++    permissive_calls,
++    permissive_misses,
++    restrictive_calls,
++    restrictive_misses,
++    could_contain_computed,
++    relation_key_worker,
++    relation_key_generic_visits,
++    infer_from_types,
++    infer_types_calls,
++    is_deeply_nested_calls,
++    is_type_related_calls,
++    is_type_related_identity_hits,
++    check_type_related_calls,
++    is_related_to_calls,
++    recursive_type_related_calls,
++    structured_type_related_calls,
++    type_reference_created,
++    type_reference_hits,
++    deferred_reference_created,
++    conditional_resolutions,
++    alias_instantiation_misses,
++    relation_size_max,
++);
++
++static COUNTS: [AtomicU64; 64] = [const { AtomicU64::new(0) }; 64];
++
++#[inline]
++pub fn add(c: C, n: u64) {
++    if on() {
++        COUNTS[c as usize].fetch_add(n, Ordering::Relaxed);
++    }
++}
++
++#[inline]
++pub fn max(c: C, n: u64) {
++    if on() {
++        COUNTS[c as usize].fetch_max(n, Ordering::Relaxed);
++    }
++}
++
++static BY_ALIAS: Mutex<Option<FxHashMap<String, u64>>> = Mutex::new(None);
++
++/// One instantiation of a type known by `label` (its alias name, or its kind).
++pub fn inst_label(label: &str) {
++    let mut g = BY_ALIAS.lock().unwrap();
++    *g.get_or_insert_with(FxHashMap::default).entry(label.to_string()).or_insert(0) += 1;
++}
++
++pub fn dump() {
++    if !on() {
++        return;
++    }
++    eprintln!("== heapdiag counters");
++    for (i, n) in NAMES.iter().enumerate() {
++        eprintln!("heapdiag {:<32} {}", n, COUNTS[i].load(Ordering::Relaxed));
++    }
++    let g = BY_ALIAS.lock().unwrap();
++    if let Some(m) = g.as_ref() {
++        let mut rows: Vec<_> = m.iter().collect();
++        rows.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
++        let top: usize =
++            std::env::var("TSRS_HEAPDIAG_TOP").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
++        eprintln!("== heapdiag instantiations by alias/kind ({} labels)", rows.len());
++        for (k, v) in rows.into_iter().take(top) {
++            eprintln!("heapdiag-inst {:<40} {}", k, v);
++        }
++    }
++}
+diff --git a/crates/tsrs_checker/src/inference.rs b/crates/tsrs_checker/src/inference.rs
+index 8d6778f..d08ba8a 100644
+--- a/crates/tsrs_checker/src/inference.rs
++++ b/crates/tsrs_checker/src/inference.rs
+@@ -55,6 +55,7 @@ impl Checker {
+         priority: InferencePriority,
+         contravariant: bool,
+     ) {
++        crate::heapdiag::add(crate::heapdiag::C::infer_types_calls, 1);
+         let n = self.get_inference_state();
+         n.inferences.borrow_mut().extend_from_slice(inferences);
+         n.original_source.set(Some(original_source));
+@@ -74,6 +75,7 @@ impl Checker {
+         target: P<Type>,
+     ) {
+         self.infer_memo.steps = self.infer_memo.steps.wrapping_add(1);
++        crate::heapdiag::add(crate::heapdiag::C::infer_from_types, 1);
+         let mut source = source;
+         let mut target = target;
+         if !self.could_contain_type_variables(target) || Self::is_no_infer_type(target) {
+diff --git a/crates/tsrs_checker/src/lib.rs b/crates/tsrs_checker/src/lib.rs
+index d148ece..874d22b 100644
+--- a/crates/tsrs_checker/src/lib.rs
++++ b/crates/tsrs_checker/src/lib.rs
+@@ -94,6 +94,7 @@ pub mod printer_types;
+ pub mod program;
+ pub mod relater_types;
+ pub mod sitecount;
++pub mod heapdiag;
+ pub mod types;
+ pub mod utilities_types;
+ pub mod workcensus;
+diff --git a/crates/tsrs_checker/src/relater_1.rs b/crates/tsrs_checker/src/relater_1.rs
+index eadf468..0d21341 100644
+--- a/crates/tsrs_checker/src/relater_1.rs
++++ b/crates/tsrs_checker/src/relater_1.rs
+@@ -178,6 +178,7 @@ impl Checker {
+         target: P<Type>,
+         relation: P<Relation>,
+     ) -> bool {
++        crate::heapdiag::add(crate::heapdiag::C::is_type_related_calls, 1);
+         let mut source = source;
+         let mut target = target;
+         if is_fresh_literal_type(source) {
+@@ -187,6 +188,7 @@ impl Checker {
+             target = target.as_literal_type().regular_type.get().unwrap();
+         }
+         if source == target {
++            crate::heapdiag::add(crate::heapdiag::C::is_type_related_identity_hits, 1);
+             return true;
+         }
+         // Two different regular literals of one kind (not enum members) are related by no relation: narrowing a
+@@ -640,6 +642,7 @@ impl Checker {
+         relation: P<Relation>,
+         error_node: Option<P<Node>>,
+     ) -> bool {
++        crate::heapdiag::add(crate::heapdiag::C::check_type_related_calls, 1);
+         self.check_type_related_to_ex(source, target, relation, error_node, None, None)
+     }
+ 
+@@ -658,6 +661,7 @@ impl Checker {
+     ) -> bool {
+         let mut error_node = error_node;
+         let r = self.get_relater();
++        crate::heapdiag::max(crate::heapdiag::C::relation_size_max, relation.size() as u64);
+         r.relation.set(Some(relation));
+         r.error_node.set(error_node);
+         r.relation_count.set(
+@@ -1571,6 +1575,7 @@ impl Checker {
+         stack: &[P<Type>],
+         max_depth: usize,
+     ) -> bool {
++        crate::heapdiag::add(crate::heapdiag::C::is_deeply_nested_calls, 1);
+         if stack.len() >= max_depth {
+             let target = get_recursion_identity_target(self, t);
+             if target.flags().intersects(TypeFlags::Intersection) {
+diff --git a/crates/tsrs_checker/src/relater_2.rs b/crates/tsrs_checker/src/relater_2.rs
+index 517ab49..9ab59ca 100644
+--- a/crates/tsrs_checker/src/relater_2.rs
++++ b/crates/tsrs_checker/src/relater_2.rs
+@@ -124,6 +124,7 @@ impl Relater {
+         recursion_flags: RecursionFlags,
+         report_errors: bool,
+     ) -> Ternary {
++        crate::heapdiag::add(crate::heapdiag::C::is_related_to_calls, 1);
+         self.is_related_to_ex(
+             c,
+             source,
+@@ -1225,6 +1226,7 @@ impl Relater {
+         intersection_state: IntersectionState,
+         recursion_flags: RecursionFlags,
+     ) -> Ternary {
++        crate::heapdiag::add(crate::heapdiag::C::recursive_type_related_calls, 1);
+         if self.overflow.get() {
+             // Note that stack depth overflows can cause _any_ relation involving structured types to become false, so it is
+             // important to have well-defined behavior even in cases that shouldn't normally occur.
+@@ -1281,6 +1283,15 @@ impl Relater {
+                 return Ternary::FALSE;
+             }
+         }
++        if crate::heapdiag::on() {
++            let lab = |t: P<Type>| -> String {
++                match t.alias().and_then(|a| a.symbol()) {
++                    Some(s) => format!("{}:{}", crate::checker_12::type_kind_label(t.flags(), t.object_flags()), s.name()),
++                    None => crate::checker_12::type_kind_label(t.flags(), t.object_flags()).to_string(),
++                }
++            };
++            crate::heapdiag::inst_label(&format!("REL {} -> {}", lab(source), lab(target)));
++        }
+         if self.relation_count.get() <= 0 {
+             self.overflow.set(true);
+             return Ternary::FALSE;
+@@ -1469,6 +1480,7 @@ impl Relater {
+         report_errors: bool,
+         intersection_state: IntersectionState,
+     ) -> Ternary {
++        crate::heapdiag::add(crate::heapdiag::C::structured_type_related_calls, 1);
+         if c.census_on() {
+             let span = c.census_begin(crate::workcensus::Cat::Rel, || {
+                 let (sym, label) = crate::workcensus::type_identity(target);
+diff --git a/crates/tsrs_cli/src/main.rs b/crates/tsrs_cli/src/main.rs
+index 23ccced..9d63c0d 100644
+--- a/crates/tsrs_cli/src/main.rs
++++ b/crates/tsrs_cli/src/main.rs
+@@ -111,6 +111,7 @@ fn main() -> std::process::ExitCode {
+             let result = execute::command_line(sys, args);
+             tsc::System::flush(sys);
+             tsrs_compiler::dump_site_counts();
++            tsrs_compiler::dump_heapdiag();
+             result.status
+         })
+         .unwrap()
+diff --git a/crates/tsrs_compiler/src/lib.rs b/crates/tsrs_compiler/src/lib.rs
+index d809dc5..87ac7f0 100644
+--- a/crates/tsrs_compiler/src/lib.rs
++++ b/crates/tsrs_compiler/src/lib.rs
+@@ -53,3 +53,4 @@ pub use program_emit::{
+ pub use programlike::{ProgramLike, get_diagnostics_of_any_program_like};
+ pub use programregions::ProgramRegions;
+ pub use tsrs_checker::sitecount::dump as dump_site_counts;
++pub use tsrs_checker::heapdiag::dump as dump_heapdiag;

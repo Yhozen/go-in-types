@@ -35,6 +35,12 @@ w(`/** Object id width in hex digits. */`);
 w(`export type IdWidth = "${W}";`);
 w(`/** Hex digit -> tuple index. */`);
 w(`export interface Ix { ${HEX.map((d, i) => `"${d}": "${i}";`).join(" ")} }`);
+w(`/** Canonical slot index 0..15 -> tuple index. */`);
+w(
+  `export interface IxS { ${range(16)
+    .map((i) => `"${nib(i)}": "${i}";`)
+    .join(" ")} }`,
+);
 w(`/** Next hex digit (f -> 0). */`);
 w(`export interface IncD { ${HEX.map((d, i) => `"${d}": "${HEX[(i + 1) % 16]}";`).join(" ")} }`);
 w(`/** Previous hex digit (0 -> f). */`);
@@ -125,14 +131,22 @@ const rebuild = (mk: string, n: number, i: number) =>
   `${mk}<${range(n)
     .map((j) => (j === i ? "V" : `N["${j}" & keyof N]`))
     .join(", ")}>`;
+/** Binary dispatch on a key among 16 literal keys: 4 tests instead of up to 16. */
+function bin(k: string, keys: string[], body: (i: number) => string, lo = 0, hi = 16): string {
+  if (hi - lo === 1) return body(lo);
+  const mid = (lo + hi) >> 1;
+  const left = keys
+    .slice(lo, mid)
+    .map((x) => `"${x}"`)
+    .join(" | ");
+  return `${k} extends ${left} ? ${bin(k, keys, body, lo, mid)} : ${bin(k, keys, body, mid, hi)}`;
+}
 w(`/** Node N with child D (hex digit) replaced by V. */`);
-w(
-  `export type SetC<N, D, V> = ${HEX.map((d, i) => `D extends "${d}" ? ${rebuild("Mk16", 16, i)} :`).join("\n  ")} never;`,
-);
+w(`export type SetC<N, D, V> = ${bin("D", HEX, (i) => rebuild("Mk16", 16, i))};`);
+w(`/** Flat object N with slot S (canonical int 0..15) replaced by V. */`);
+w(`export type SetS<N, S, V> = ${bin("S", range(16).map(nib), (i) => rebuild("Mk16", 16, i))};`);
 w(`/** Lazy root N with child D (hex digit) replaced by V; markers kept. */`);
-w(
-  `export type SetR<N, D, V> = ${HEX.map((d, i) => `D extends "${d}" ? ${rebuild("Mk19", 19, i)} :`).join("\n  ")} never;`,
-);
+w(`export type SetR<N, D, V> = ${bin("D", HEX, (i) => rebuild("Mk19", 19, i))};`);
 w(`/** Lazy root rebuilt with new slot count M (same depth). */`);
 w(
   `export type SetRN<N, M> = Mk19<${range(16)

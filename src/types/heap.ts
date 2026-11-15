@@ -70,6 +70,8 @@ import type {
   ERoot,
   Id0,
   IncId,
+  IxS,
+  SetS,
   LPath,
   Mk16,
   Mk19,
@@ -165,18 +167,19 @@ type LazyRoot<C, D, N, Z> = Mk19<C, C, C, C, C, C, C, C, C, C, C, C, C, C, C, C,
 
 // ------------------------------------------------------------ objects
 
-type First<S> = S extends `${infer c}${string}` ? c : never;
 type IsLazy<O> = O["length" & keyof O] extends 19 ? true : false;
 type LGet<N, P> = P extends `${infer d}${infer R}` ? LGet<Ch<N, d>, R> : N;
 type LSetN<N, P, V> = P extends `${infer d}${infer R}` ? SetC<N, d, LSetN<Ch<N, d>, R, V>> : V;
 type LSet<O, P, V> = P extends `${infer d}${infer R}` ? SetR<O, d, LSetN<Ch<O, d>, R, V>> : never;
 
 /** Slot S (int) of object O (`undefined` when never written in a lazy object). */
-export type OGet<O, S extends string> =
-  IsLazy<O> extends true ? LGet<O, LPath<S, O["16" & keyof O]>> : Ch<O, First<S>>;
+export type OGet<O, S extends string> = O["length" & keyof O] extends 19
+  ? LGet<O, LPath<S, O["16" & keyof O]>>
+  : O[IxS[S & keyof IxS] & keyof O];
 /** O with slot S set to V. */
-export type OSet<O, S extends string, V> =
-  IsLazy<O> extends true ? LSet<O, LPath<S, O["16" & keyof O]>, V> : SetC<O, First<S>, V>;
+export type OSet<O, S extends string, V> = O["length" & keyof O] extends 19
+  ? LSet<O, LPath<S, O["16" & keyof O]>, V>
+  : SetS<O, S, V>;
 /** V, or the zero Z when V is an unwritten slot. */
 type Dflt<V, Z> = [V] extends [undefined] ? Z : V;
 
@@ -193,10 +196,10 @@ export type FieldAddr<P, Off extends string> = PtrMk<
 >;
 
 /** *P for a 1-slot type with zero value Z0 (P non-nil). */
-export type Load1<H, P, Z0> = Dflt<
-  OGet<GetObj<H, P["0" & keyof P]>, P["1" & keyof P] & string>,
-  Z0
->;
+export type Load1<H, P, Z0> = Load1O<GetObj<H, P["0" & keyof P]>, P["1" & keyof P] & string, Z0>;
+type Load1O<O, S extends string, Z0> = O["length" & keyof O] extends 19
+  ? Dflt<LGet<O, LPath<S, O["16" & keyof O]>>, Z0>
+  : O[IxS[S & keyof IxS] & keyof O];
 /** *P for an aggregate type with zero slots Z (a tuple; result has as many slots). */
 export type LoadK<H, P, Z> = LoadKI<GetObj<H, P["0" & keyof P]>, P["1" & keyof P] & string, Z, []>;
 type LoadKI<O, S extends string, Z, Acc> = Z extends [infer z, ...infer ZR]

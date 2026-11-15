@@ -66,22 +66,22 @@ interface Op {
 const ops: Record<string, Op> = {
   none: { a0: q("x") },
   load1: {
-    a: `H.Load1<H, H.PtrMk<T, "1">, "0">`,
+    a: `H.Load1<H, P1, "0">`,
     a0: q("x"),
     chk: (l) => [`Res[1]`, q(`v${tgtId(l)}`)],
   },
   store1: {
-    h: `H.Store1<H, H.PtrMk<T, "1">, V>`,
+    h: `H.Store1<H, P1, V>`,
     a0: q("x"),
     chk: (l) => [`H.Load1<Res[0], H.PtrMk<${q(tgtId(l))}, "1">, "0">`, q(`w${l}`)],
   },
   loadK: {
-    a: `H.LoadK<H, H.PtrMk<T, "0">, ["0", "0", "0", "0"]>`,
+    a: `H.LoadK<H, P0, ["0", "0", "0", "0"]>`,
     a0: q("x"),
     chk: (l) => [`Res[1][1]`, q(`v${tgtId(l)}`)],
   },
   storeK: {
-    h: `H.StoreK<H, H.PtrMk<T, "2">, [V, V, V, V]>`,
+    h: `H.StoreK<H, P2, [V, V, V, V]>`,
     a0: q("x"),
     chk: (l) => [`H.Load1<Res[0], H.PtrMk<${q(tgtId(l))}, "5">, "0">`, q(`w${l}`)],
   },
@@ -96,17 +96,17 @@ const ops: Record<string, Op> = {
     chk: (l) => [`H.Load1<Res[0], H.PtrMk<${q(allocId(l))}, "0">, "z">`, q("z")],
   },
   lazyLoad1: {
-    a: `H.Load1<H, H.PtrMk<LT, LS>, "z">`,
+    a: `H.Load1<H, LP, "z">`,
     a0: q("x"),
     chk: () => [`Res[1]`, q("z")],
   },
   lazyStore1: {
-    h: `H.Store1<H, H.PtrMk<LT, LS>, V>`,
+    h: `H.Store1<H, LP, V>`,
     a0: q("x"),
     chk: (l) => [`H.Load1<Res[0], H.PtrMk<${q(lazyId(l))}, ${q(lazySlot(l))}>, "z">`, q(`w${l}`)],
   },
   fieldAddr: {
-    a: `H.FieldAddr<H.PtrMk<T, Ix>, "3">`,
+    a: `H.FieldAddr<P1, "3">`,
     a0: q("x"),
     chk: (l) => [`Res[1][0]`, q(tgtId(l))],
   },
@@ -247,6 +247,11 @@ function generate(op: string, n: number, k: number): string {
   tab("LTg", (i) => q(lazyId(i)));
   tab("LTg2", (i) => q(lazy2Id(i)));
   tab("LSl", (i) => q(lazySlot(i)));
+  // pointers come from registers in real code: tables of ready-made pointer values
+  tab("P0T", (i) => `[${q(tgtId(i))}, "0"]`);
+  tab("P1T", (i) => `[${q(tgtId(i))}, "1"]`);
+  tab("P2T", (i) => `[${q(tgtId(i))}, "2"]`);
+  tab("LPT", (i) => `[${q(lazyId(i))}, ${q(lazySlot(i))}]`);
   w(`type At<T, I> = I extends keyof T ? T[I] : never;`);
   const sub = (s: string) =>
     s
@@ -255,7 +260,11 @@ function generate(op: string, n: number, k: number): string {
       .replace(/\bV\b/g, "At<Val, I>")
       .replace(/\bIx\b/g, "At<IxT, I>")
       .replace(/\bLT\b/g, "At<LTg, I>")
-      .replace(/\bLS\b/g, "At<LSl, I>");
+      .replace(/\bLS\b/g, "At<LSl, I>")
+      .replace(/\bP0\b/g, "At<P0T, I>")
+      .replace(/\bP1\b/g, "At<P1T, I>")
+      .replace(/\bP2\b/g, "At<P2T, I>")
+      .replace(/\bLP\b/g, "At<LPT, I>");
   const nx = `At<Seq, I>`;
   if (o.r) {
     w(`type Loop<H, I, A> = I extends "end" ? [H, A] : LoopR<${sub(o.r)}, I>;`);

@@ -88,7 +88,7 @@ export type NDec<A extends string, O extends string = ""> = A extends `${infer a
   : never;
 
 /** Canonical form of an unsigned nibble string below 2^63: drop high zeros, keep a sign "0". */
-type NTrim<U extends string> =
+export type NTrim<U extends string> =
   StripZ<U> extends infer V extends string
     ? V extends ""
       ? "0"

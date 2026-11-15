@@ -6,8 +6,8 @@
 // strings), plus { byFunc, byKind } op counts with --ops. --pause (alias of
 // --pause-at) stops after N total ops and writes the snapshot; the printed
 // result then has "paused": true.
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import type { Program } from "../src/ir/types.ts";
 import { Machine } from "../src/ref/interp.ts";
 import { restore, snapshot } from "../src/ref/snapshot.ts";
@@ -57,7 +57,10 @@ if (resumeFile) {
 const state = m.run(pauseAt !== undefined ? Number(pauseAt) : Infinity);
 const secs = (performance.now() - t0) / 1000;
 if (state === "paused" || (pauseAt !== undefined && snapFile)) {
-  if (snapFile) writeFileSync(snapFile, JSON.stringify(snapshot(m, progPath)));
+  if (snapFile) {
+    mkdirSync(dirname(resolve(snapFile)), { recursive: true });
+    writeFileSync(snapFile, JSON.stringify(snapshot(m, progPath)));
+  }
 }
 const r = m.result();
 if (json) {

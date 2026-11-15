@@ -100,6 +100,13 @@ Rules:
 - Strings are byte strings; `range` over a string and `[]rune(s)` decode
   UTF-8 exactly as Go (invalid byte → U+FFFD, width 1). Hosts pass text as
   UTF-8 bytes.
+- `==`/`!=` on structs, arrays and interfaces compare slot by slot with
+  the slot's type: float slots compare as floats (NaN != NaN, +0 == -0),
+  not as bit patterns. This is the one place float semantics are not
+  lowered to soft float (scalar float `==` is a soft-float call): the
+  type level checks the two bit patterns for equality, then the NaN
+  (exponent all ones, mantissa non-zero) and ±0 (all bits but the sign
+  zero) cases, which is cheaper than a call per float field.
 - Integer arithmetic wraps; `/` and `%` truncate; division by zero, nil
   dereference, index/slice out of range and failed type assertions panic
   with Go's runtime error message text.

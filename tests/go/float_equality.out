@@ -1,0 +1,15 @@
+nan struct false true false
+zero struct true false
+nan array false
+zero array true
+nan iface false true
+zero iface true
+zero iface32 true
+nan struct iface false
+zero struct iface true
+float32 field true
+float32 nan field false
+nested true
+nested nan false
+bits differ true
+--- exit 0 ---

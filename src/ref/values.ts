@@ -100,7 +100,6 @@ export class Exit {
 
 export const MAXS = Number.MAX_SAFE_INTEGER;
 const MAXSN = BigInt(MAXS);
-const TWO64 = 1n << 64n;
 
 export type I64 = number | bigint;
 

@@ -454,7 +454,7 @@ type Add6L<
     : never
   : never;
 
-/** a - 1 for canonical a (the borrow runs through low "0" nibbles). */
+/** a - 1 for canonical a (the borrow runs through low "0" nibbles), 64-bit wrapping like Inc. */
 type Dec1<A extends string, O extends string> = A extends `${infer a}${infer R}`
   ? a extends "0"
     ? R extends ""
@@ -462,7 +462,9 @@ type Dec1<A extends string, O extends string> = A extends `${infer a}${infer R}`
       : Dec1<R, `${O}f`>
     : R extends ""
       ? a extends "8"
-        ? `${O}7f`
+        ? O extends "fffffffffffffff"
+          ? `${O}7`
+          : `${O}7f`
         : Trim<`${O}${PRED[a & keyof PRED]}`>
       : Cat<`${O}${PRED[a & keyof PRED]}`, R>
   : "f";

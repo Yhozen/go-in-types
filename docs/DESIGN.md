@@ -167,8 +167,31 @@ Rules:
   10k, 100k live objects plus a walk/op = 0 diag check.
 - From LESSONS.md: at most 4 `infer` bindings per alias; dispatch by
   interface property lookup; fuel pool literal per chunk; emit `.d.ts`.
-- Value encodings in types are stage 4's to choose, but each one must have a
-  bijection to the reference value above, so snapshots convert both ways.
+- Value encodings must each have a bijection to the reference value above,
+  with converters in `src/types/codec.ts` (reference value + IR type ↔ type
+  literal source text), so snapshots convert both ways.
+
+### Type-level encodings (stage 4 contract)
+
+Code lives in `src/types/` (type-level `.ts` modules, generated tables as
+`*.gen.ts`); tests in `tests/types/`.
+
+| Go | type-level value |
+|---|---|
+| bool | `true` / `false` |
+| every integer width, signed or unsigned | lua-in-types' int64 nibble string (lowercase hex, least significant nibble first, shortest two's complement that sign-extends; `0`→`"0"`, `-1`→`"f"`, `8`→`"80"`) of the value's **w-bit pattern sign-extended to 64 bits**. So uint8 255 is `"f"`, uint64 max is `"f"`, int16 -2 is `"e"`. Every value of every width has one canonical form; signedness and width live in the op, which the emitter picks from the IR type. |
+| float32/64 | the bit pattern as the matching unsigned integer (above) |
+| string | a string literal of bytes (chars 0..255), indexed with a `Chars`-style trie for long strings |
+| nil (any kind) | `null` |
+| pointer, slice, map, chan, func, interface, struct/array | defined by the heap module (`src/types/heap.ts`), documented in its header and in this section by stage 4 |
+
+Start from lua-in-types (`../lua-in-types/src/aot/types/`: `int64.ts`,
+`int64-tables.ts`, `str.ts`, `lstr.ts`, `hash.ts`, `trie.ts`): copy and
+adapt, never import across repos. Each primitive gets a fuzz test against
+the reference interpreter's own functions (`src/ref/values.ts` etc.) and,
+if it touches the heap, the H5 cost test at 0, 1k, 10k, 100k live objects.
+Run tsrs benchmarks and gates through `scripts/heavy.sh` (two machine-wide
+slots).
 
 ## Testing and gates (stage 2)
 

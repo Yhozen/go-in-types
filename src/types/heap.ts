@@ -202,8 +202,10 @@ type Load1O<O, S extends string, Z0> = O["length" & keyof O] extends 19
   : O[IxS[S & keyof IxS] & keyof O];
 /** *P for an aggregate type with zero slots Z (a tuple; result has as many slots). */
 export type LoadK<H, P, Z> = LoadKI<GetObj<H, P["0" & keyof P]>, P["1" & keyof P] & string, Z, []>;
-type LoadKI<O, S extends string, Z, Acc> = Z extends [infer z, ...infer ZR]
-  ? LoadKI<O, Inc<S>, ZR, Push<Acc, Dflt<OGet<O, S>, z>>>
+type LoadKI<O, S extends string, Z, Acc, F extends 0[] = []> = Z extends [infer z, ...infer ZR]
+  ? F["length"] extends Fuel
+    ? Restart<LoadKI<O, S, Z, Acc>>
+    : LoadKI<O, Inc<S>, ZR, Push<Acc, Dflt<OGet<O, S>, z>>, [...F, 0]>
   : Acc;
 /** *P = V for a 1-slot type (P non-nil). */
 export type Store1<H, P, V> = StoreAt<H, P["0" & keyof P], P["1" & keyof P] & string, V>;
@@ -211,9 +213,17 @@ type StoreAt<H, Id, S extends string, V> = PutObj<H, Id, OSet<GetObj<H, Id>, S, 
 /** *P = V for an aggregate (V a tuple of its slots). */
 export type StoreK<H, P, V> = StoreKAt<H, P["0" & keyof P], P["1" & keyof P] & string, V>;
 type StoreKAt<H, Id, S extends string, V> = PutObj<H, Id, StoreKI<GetObj<H, Id>, S, V>>;
-type StoreKI<O, S extends string, V> = V extends [infer x, ...infer R]
-  ? StoreKI<OSet<O, S, x>, Inc<S>, R>
+type StoreKI<O, S extends string, V, F extends 0[] = []> = V extends [infer x, ...infer R]
+  ? F["length"] extends Fuel
+    ? Restart<StoreKI<O, S, V>>
+    : StoreKI<OSet<O, S, x>, Inc<S>, R, [...F, 0]>
   : O;
+
+// Loops: a chain of tail calls is capped at ~1000 steps, so every loop
+// counts Fuel steps and then restarts outside tail position (one level of
+// instantiation depth per Fuel steps: ~25k steps per call).
+type Fuel = 256;
+type Restart<X> = X extends infer Y ? Y : never;
 
 /** Equality of two pointers (or chan values): identity. */
 export type PtrEq<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -255,8 +265,10 @@ export type ArrayIndexAddr<P, I extends string, Es extends string> = PtrMk<
 export type AggIndex1<A, I extends string> = A[NibDec[I] & keyof A];
 /** a[i] on an array register value for elements of Es > 1 slots (Z: element zero, gives the count). */
 export type AggIndexK<A, I extends string, Es extends string, Z> = AggSlots<A, Mul<I, Es>, Z, []>;
-type AggSlots<A, S extends string, Z, Acc> = Z extends [unknown, ...infer ZR]
-  ? AggSlots<A, Inc<S>, ZR, Push<Acc, A[NibDec[S] & keyof A]>>
+type AggSlots<A, S extends string, Z, Acc, F extends 0[] = []> = Z extends [unknown, ...infer ZR]
+  ? F["length"] extends Fuel
+    ? Restart<AggSlots<A, S, Z, Acc>>
+    : AggSlots<A, Inc<S>, ZR, Push<Acc, A[NibDec[S] & keyof A]>, [...F, 0]>
   : Acc;
 
 // ------------------------------------------------------------ slices
@@ -395,9 +407,6 @@ type CopyIn<H, DstId, DstOff extends string, Src, Cnt extends string, Ze> = Cnt 
       : never;
 type RevT<T, O extends unknown[] = []> = T extends [infer x, ...infer R] ? RevT<R, [x, ...O]> : O;
 
-// Each loop runs at most 256 steps per chain (tail-call limit ~1000), then
-// an outer loop restarts it: copies of up to ~250k slots.
-type Fuel256 = 256;
 type CopySame<
   O,
   S extends string,
@@ -408,8 +417,8 @@ type CopySame<
   F extends 0[] = [],
 > = N extends "0"
   ? O
-  : F["length"] extends Fuel256
-    ? CopySame<O, S, D, N, Zc, Ze>
+  : F["length"] extends Fuel
+    ? Restart<CopySame<O, S, D, N, Zc, Ze>>
     : Zc extends [infer z, ...infer ZR]
       ? CopySame<OSet<O, D, Dflt<OGet<O, S>, z>>, Inc<S>, Inc<D>, Dec<N>, ZR, Ze, [...F, 0]>
       : CopySame<O, S, D, N, Ze, Ze, F>;
@@ -424,8 +433,8 @@ type CopyOther<
   F extends 0[] = [],
 > = N extends "0"
   ? O
-  : F["length"] extends Fuel256
-    ? CopyOther<O, Src, S, D, N, Zc, Ze>
+  : F["length"] extends Fuel
+    ? Restart<CopyOther<O, Src, S, D, N, Zc, Ze>>
     : Zc extends [infer z, ...infer ZR]
       ? CopyOther<OSet<O, D, Dflt<OGet<Src, S>, z>>, Src, Inc<S>, Inc<D>, Dec<N>, ZR, Ze, [...F, 0]>
       : CopyOther<O, Src, S, D, N, Ze, Ze, F>;
@@ -440,15 +449,15 @@ type CopyBack<
   F extends 0[] = [],
 > = N extends "0"
   ? O
-  : F["length"] extends Fuel256
-    ? CopyBack<O, S, D, N, Zc, Ze>
+  : F["length"] extends Fuel
+    ? Restart<CopyBack<O, S, D, N, Zc, Ze>>
     : Zc extends [infer z, ...infer ZR]
       ? CopyBack<OSet<O, D, Dflt<OGet<O, S>, z>>, DecZ<S>, DecZ<D>, Dec<N>, ZR, Ze, [...F, 0]>
       : CopyBack<O, S, D, N, Ze, Ze, F>;
 type DecZ<S extends string> = S extends "0" ? "0" : Dec<S>;
 type CopyVals<O, T, D extends string, Zc, Ze, F extends 0[] = []> = T extends [infer x, ...infer R]
-  ? F["length"] extends Fuel256
-    ? CopyVals<O, T, D, Zc, Ze>
+  ? F["length"] extends Fuel
+    ? Restart<CopyVals<O, T, D, Zc, Ze>>
     : Zc extends [infer z, ...infer ZR]
       ? CopyVals<OSet<O, D, Dflt<x, z>>, R, Inc<D>, ZR, Ze, [...F, 0]>
       : CopyVals<O, T, D, Ze, Ze, F>
@@ -774,3 +783,4 @@ export type MakeClosure<F, Env> = Mk2<F, Env>;
 export type FuncVal<F> = Mk2<F, []>;
 export type FuncOf<V> = V["0" & keyof V];
 export type EnvOf<V> = V["1" & keyof V];
+export type { Add } from "./nat.ts";

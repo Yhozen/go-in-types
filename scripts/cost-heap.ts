@@ -366,7 +366,8 @@ async function cell(op: string, n: number) {
     const [da, db] = [await runOne(f1, diag, env), await runOne(f2, diag, env)];
     const walk = (o: string) => diagNum(o, "inst_permissive") + diagNum(o, "inst_restrictive");
     row.walkPerOp = (walk(db.out) - walk(da.out)) / K;
-    row.relPerOp = (diagNum(db.out, "relation") - diagNum(da.out, "relation")) / K;
+    row.relPerOp =
+      (diagNum(db.out, "relation_size_max") - diagNum(da.out, "relation_size_max")) / K;
   }
   return row;
 }

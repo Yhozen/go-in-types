@@ -142,3 +142,10 @@ for (const name of ["closures", "defer_panic", "maps", "interfaces", "structs_po
     },
     300_000,
   );
+
+test("opaque deferstack values (stack indices) encode as ints", () => {
+  const prog = program("range_func_defer");
+  const ti = new TypeInfo(prog);
+  const t = prog.types.findIndex((x: any) => x.k === "opaque" && x.what === "deferstack");
+  if (t >= 0) expect(encSnapValue(ti, 2, t)).toBe('"2"');
+}, 120_000);

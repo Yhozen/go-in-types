@@ -694,6 +694,8 @@ export function encSnapValue(ti: TypeInfo, v: any, t: number): string {
       return lit(v);
     case "pointer":
     case "opaque":
+      // a deferstack value (DESIGN.md: the frame's stack index) is a number
+      if (typeof v === "number") return lit(encNat(v));
       if (v !== null && ("mi" in v || "si" in v)) return encIter(v);
       return v === null ? "null" : `[${lit(snapId(v.p))}, ${lit(encNat(v.i))}]`;
     case "slice":

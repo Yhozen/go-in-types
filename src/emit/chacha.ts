@@ -152,7 +152,6 @@ type Outs<
     : never;
 type Row<N extends number> = Half[N & keyof Half];
 type Half = {
-  [k: number]: never;
   0: 0;
   2: 1;
   4: 2;

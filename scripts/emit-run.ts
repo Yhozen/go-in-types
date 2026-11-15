@@ -126,6 +126,7 @@ export function runOne(input: string): RunOut {
     msg = errs.length
       ? errs.slice(0, 3).join(" | ").slice(0, 2000)
       : "no result: " + outText.slice(-300);
+  if (!ok && shown) msg += `\n     got: ${show ? shown : shown.slice(0, 600)}`;
   return { name, ok, inst, secs, chunks, ops: ref.ops, msg };
 }
 

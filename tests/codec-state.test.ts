@@ -1,12 +1,9 @@
 // Round trips of whole reference snapshots (maps included) through the
 // type-level heap form and back.
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vite-plus/test";
-import type { Program } from "../src/ir/types.ts";
 import { Machine } from "../src/ref/interp.ts";
-import { snapshot } from "../src/ref/snapshot.ts";
 import {
   callSites,
   decodeStart,
@@ -22,25 +19,8 @@ import {
   typeSnapshot,
   typesToSnapshot,
 } from "../src/types/codec.ts";
+import { program, snapAt } from "./codec-state-helpers.ts";
 import { repo, runCases, scratch, type Case } from "./types/tsrs-harness.ts";
-
-export function program(name: string): Program {
-  const out = join(repo, ".run/ir", `${name}.json`);
-  if (!existsSync(out))
-    execFileSync(
-      "node",
-      [join(repo, "scripts/frontend.ts"), join(repo, "tests/go", `${name}.go`), "-o", out],
-      { stdio: "ignore" },
-    );
-  return JSON.parse(readFileSync(out, "utf8")) as Program;
-}
-
-export function snapAt(prog: Program, ops: number): any {
-  const m = new Machine(prog);
-  m.boot();
-  m.run(ops);
-  return JSON.parse(JSON.stringify(snapshot(m, "prog.json")));
-}
 
 for (const name of ["maps", "sorting", "interfaces"])
   test(`heap round trip with maps: ${name}`, () => {
@@ -124,11 +104,7 @@ for (const name of ["closures", "defer_panic", "maps", "interfaces", "structs_po
       let n = 0;
       for (const q of [0, 1, 2, 3, 5, 7]) {
         const snap = snapAt(prog, Math.floor((total * q) / 8));
-        const st = startState(prog, snap, {
-          typesImp: "../src/types",
-          rtImp: "../src/emit/rt.ts",
-          emitted,
-        });
+        const st = startState(prog, snap, { rt: "./rt", emitted });
         const back = decodeStart(prog, st.module, emitted, st.snap);
         // objects: every slot the decoded state reaches by a typed path
         const maps = new Map<number, number>();

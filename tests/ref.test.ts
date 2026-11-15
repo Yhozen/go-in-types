@@ -427,6 +427,37 @@ test("snapshot at every op count resumes to the same result", () => {
   }
 });
 
+test("callEntry calls a host entry after a finished run, also from a snapshot", () => {
+  const p = program([
+    { name: "main", regTypes: [], blocks: [[{ op: "return", results: [] }]] },
+    {
+      name: "double",
+      regTypes: [1, 1],
+      params: 1,
+      sig: 8,
+      blocks: [
+        [
+          { op: "binop", dst: 1, t: 1, kind: "+", x: { r: 0 }, y: { r: 0 } },
+          { op: "return", results: [{ r: 1 }] },
+        ],
+      ],
+    },
+  ]);
+  p.types.push({ k: "func", params: [1], results: [1], variadic: false, slots: 1 }); // 8
+  const m = run(p);
+  expect(m.result().exit).toBe(0);
+  m.callEntry(2, [21]);
+  expect(m.run()).toBe("done");
+  expect(m.result().exit).toBe(42);
+  const m2 = restore(p, JSON.parse(JSON.stringify(snapshot(m, "x"))));
+  m2.callEntry(2, [5]);
+  m2.run();
+  expect(m2.result().exit).toBe(10);
+  const busy = new Machine(p);
+  busy.boot();
+  expect(() => busy.callEntry(2, [1])).toThrow(/still running/);
+});
+
 test("interface equality on uncomparable dynamic types panics", () => {
   const p = program([]);
   p.types.push({ k: "slice", elem: 1, slots: 1 });

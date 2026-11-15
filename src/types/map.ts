@@ -43,6 +43,7 @@
 // the heap is only an alias argument. H3: tables are read by literal keys.
 import type * as K from "./str-tables.gen.ts";
 import type * as T from "./map-tables.gen.ts";
+import type { AllocObj, GetObj, NextId, Panic, PutObj } from "./heap.ts";
 import type { Len, NDec, NInc, NLt, NTrim } from "./str.ts";
 
 // ---------------------------------------------------------------- constructors
@@ -302,12 +303,107 @@ export type MsNext<MS, It extends string, ZK, ZV> =
   NLt<It, F1<MS> & string> extends true
     ? F5<MS> extends undefined
       ? Mk4<false, ZK, ZV, It>
-      : MsNextAt<MS, It, ZK, ZV, SeqPath<F4<MS>, It>>
+      : MsNextAt4<MS, It, ZK, ZV, SeqPath<F4<MS>, It>>
     : Mk4<false, ZK, ZV, It>;
-type MsNextAt<MS, It extends string, ZK, ZV, P extends string> =
+type MsNextAt4<MS, It extends string, ZK, ZV, P extends string> =
   TGetP<F5<MS>, P> extends infer C extends string
-    ? MsNextE<MsGet<MS, C>, It>
+    ? MsNextE<MsGet<MS, C>, NInc<It>>
     : Succ<F5<MS>, P> extends infer Q extends string
-      ? MsNextE<MsGet<MS, TGetP<F5<MS>, Q> & string>, NTrim<Rev<Q>>>
+      ? MsNextE<MsGet<MS, TGetP<F5<MS>, Q> & string>, NInc<NTrim<Rev<Q>>>>
       : Mk4<false, ZK, ZV, It>;
-type MsNextE<E, S extends string> = Mk4<true, F1<E>, F2<E>, NInc<S>>;
+type MsNextE<E, It2> = Mk4<true, F1<E>, F2<E>, It2>;
+/** The next live entry at or after It and the iterator state after it: [entry, It2], or false. */
+type MsNextX<MS, It extends string> =
+  NLt<It, F1<MS> & string> extends true
+    ? F5<MS> extends undefined
+      ? false
+      : MsNextAt<MS, It, SeqPath<F4<MS>, It>>
+    : false;
+type MsNextAt<MS, It extends string, P extends string> =
+  TGetP<F5<MS>, P> extends infer C extends string
+    ? Mk2<MsGet<MS, C>, NInc<It>>
+    : Succ<F5<MS>, P> extends infer Q extends string
+      ? Mk2<MsGet<MS, TGetP<F5<MS>, Q> & string>, NInc<NTrim<Rev<Q>>>>
+      : false;
+
+/** The state of a map with the entries of MS in iteration order, renumbered from 0 (maps.clone). */
+export type MsRebuild<MS> = MsCopyD<MS, "0", MsEmpty<F2<MS>>>;
+type MsCopyD<MS, It extends string, Acc> =
+  MsCopyL<MS, It, Acc, "300"> extends infer R
+    ? F0<R> extends 1
+      ? MsCopyD<MS, F1<R> & string, F2<R>>
+      : F2<R>
+    : never;
+type MsCopyL<MS, It extends string, Acc, F extends string> = F extends "0"
+  ? Mk4<1, It, Acc, 0>
+  : MsNextX<MS, It> extends infer X
+    ? X extends false
+      ? Mk4<0, It, Acc, 0>
+      : MsCopyL<MS, F1<X> & string, MsSet<Acc, F0<F0<X>> & string, F1<F0<X>>, F2<F0<X>>>, K.FUEL[F]>
+    : never;
+
+// ---------------------------------------------------------------- maps on the heap
+//
+// A map value is null (nil) or its object id. Ops take the heap H as an
+// alias argument (H2) and the key's canonical form C (`Key*` above).
+
+/** The heap after `make(map[K]V)`; Mode "i" for integer key types, "s" otherwise. */
+export type MakeMap<H, Mode> = AllocObj<H, MsEmpty<Mode>>;
+/** The map value `make` gives, read from the heap before MakeMap. */
+export type MakeMapV<H> = NextId<H>;
+
+// Each op reads the state through `MS extends unknown` so the declarations
+// stay deferred (checking them generically over the heap's trie costs ~1M
+// types per alias otherwise).
+
+/** `len(m)`. */
+export type MapLen<H, M> = M extends null ? "0" : OnMs<GetObj<H, M>, "len", 0, 0, 0>;
+/** `m[k]` (Z: the value type's zero). */
+export type MapLookup<H, M, C extends string, Z> = M extends null
+  ? Z
+  : OnMs<GetObj<H, M>, "get", C, Z, 0>;
+/** `v, ok := m[k]`. */
+export type MapLookupOk<H, M, C extends string, Z> = M extends null
+  ? Mk2<Z, false>
+  : OnMs<GetObj<H, M>, "getok", C, Z, 0>;
+/** `true`, or the nil-map write panic (runtime.plainError). */
+export type MapUpdateCk<M> = M extends null ? Panic<"p", ["assignment to entry in nil map"]> : true;
+/** The heap after `m[k] = v` (M not nil: MapUpdateCk first). */
+export type MapUpdate<H, M, C extends string, Key, V> = PutObj<
+  H,
+  M,
+  OnMs<GetObj<H, M>, "set", C, Key, V>
+>;
+/** The heap after `delete(m, k)`. */
+export type MapDelete<H, M, C extends string> = M extends null
+  ? H
+  : PutObj<H, M, OnMs<GetObj<H, M>, "del", C, 0, 0>>;
+/** The heap after `clear(m)`. */
+export type MapClear<H, M> = M extends null
+  ? H
+  : PutObj<H, M, OnMs<GetObj<H, M>, "clear", 0, 0, 0>>;
+/** One `next` of `range m` at iterator state It (initially "0"): `[ok, k, v, It2]`. */
+export type MapNext<H, M, It extends string, ZK, ZV> = M extends null
+  ? Mk4<false, ZK, ZV, It>
+  : OnMs<GetObj<H, M>, "next", It, ZK, ZV>;
+/** The heap after `maps.clone(m)` (M not nil); the clone is MakeMapV of the heap before. */
+export type MapClone<H, M> = AllocObj<H, OnMs<GetObj<H, M>, "clone", 0, 0, 0>>;
+
+/** Op on map state MS with arguments A..C. */
+type OnMs<MS, Op, A, B, C> = MS extends unknown
+  ? Op extends "get"
+    ? MsLookup<MS, A & string, B>
+    : Op extends "set"
+      ? MsSet<MS, A & string, B, C>
+      : Op extends "next"
+        ? MsNext<MS, A & string, B, C>
+        : Op extends "getok"
+          ? MsLookupOk<MS, A & string, B>
+          : Op extends "del"
+            ? MsDel<MS, A & string>
+            : Op extends "len"
+              ? MsLen<MS>
+              : Op extends "clear"
+                ? MsClear<MS>
+                : MsRebuild<MS>
+  : never;

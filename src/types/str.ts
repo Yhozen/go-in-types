@@ -5,19 +5,21 @@
 // lowercase hex nibbles, least significant first, the shortest two's
 // complement that sign-extends to the value's pattern sign-extended to 64
 // bits ("0", "1", "f" for -1, "80" for 8; a uint8 255 is "f"). Operations
-// that panic return `Panic<Msg>` (`["panic", msg]`, a runtime.Error message
-// without the "runtime error: " prefix), which the caller raises.
+// that panic return `Panic<Msg>` (heap.ts's `Panic<"e", [msg]>`: a
+// runtime.errorString whose message, without the "runtime error: " prefix,
+// is one string part), which the caller raises.
 //
 // Long strings are read through an index, `Chars<S>` (adapted from
 // lua-in-types' src/aot/types/str.ts): a 16-ary trie of 256-char blocks keyed
 // by the nibbles of the offset, built once per distinct string and memoized
 // by the checker's alias-instantiation cache, so a byte read costs a few
 // indexed accesses once it exists.
+import type { Panic as HP } from "./heap.ts";
 import type * as I from "./int.ts";
 import type * as K from "./str-tables.gen.ts";
 
-/** A runtime panic (runtime.errorString with this message) returned by an operation (int.ts's). */
-export type Panic<M extends string> = I.Panic<M>;
+/** A runtime panic (runtime.errorString with this message), heap.ts's form with one message part. */
+export type Panic<M extends string> = HP<"e", [M]>;
 
 type NegNib = "8" | "9" | "a" | "b" | "c" | "d" | "e" | "f";
 

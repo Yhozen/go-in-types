@@ -81,7 +81,7 @@ type Ent<E, Key, H, K, X, F, A> = Key extends keyof E
   : St<"x", "", H, K, XErr<X, `fatal error: no entry ${Key & string}\n`>, 2, "">;
 
 /** An entry's arguments (intersected with the entry interface). */
-interface EA<H, K, X, F, A> {
+export interface EA<H, K, X, F, A> {
   h: H;
   k: K;
   x: X;

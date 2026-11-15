@@ -532,6 +532,60 @@ class FuncEmitter {
     this.useCount.set(r, (this.useCount.get(r) ?? 0) + 1);
   }
 
+  /**
+   * A switch chain starting at block bi: bi and the blocks its "else"
+   * edges reach each end in `v = x == const; if v` on the same register x
+   * (the later ones hold nothing else and have one predecessor). Emitted as
+   * one table dispatch (SegB.switchOp). null below SWITCH_MIN cases.
+   */
+  switchAt(bi: number): SwitchChain | null {
+    const f = this.f;
+    const tail = (b: number, whole: boolean): { x: number; key: Operand } | null => {
+      const ins = f.blocks[b]!.instrs;
+      if (ins.length < 2 || (whole && ins.length !== 2)) return null;
+      const c = ins[ins.length - 2]!;
+      const t = ins[ins.length - 1]!;
+      if (c.op !== "binop" || c.kind !== "==" || t.op !== "if") return null;
+      if (!("r" in t.cond) || t.cond.r !== c.dst || this.useCount.get(c.dst) !== 1) return null;
+      const [rx, k] =
+        "r" in c.x && "c" in c.y
+          ? [c.x.r, c.y]
+          : "r" in c.y && "c" in c.x
+            ? [c.y.r, c.x]
+            : [-1, null];
+      if (rx < 0 || !k) return null;
+      const ti = this.e.info(f.regTypes[rx]!);
+      if (ti.k !== "int" && ti.k !== "string") return null;
+      return { x: rx, key: k };
+    };
+    const h = tail(bi, false);
+    if (!h) return null;
+    // not a head when the chain reaches bi from its predecessor
+    const pb = f.blocks[bi]!.preds;
+    if (pb.length === 1 && f.blocks[pb[0]!]!.succs[1] === bi && f.blocks[bi]!.instrs.length === 2) {
+      const pt = tail(pb[0]!, false);
+      if (pt && pt.x === h.x) return null;
+    }
+    const cases: { key: string; blk: number }[] = [];
+    const seen = new Set<string>();
+    let b = bi;
+    let cur: { x: number; key: Operand } | null = h;
+    const sb0 = { constText: (c: any, t: number) => constTextOf(this.e, c, t) };
+    while (cur && cur.x === h.x) {
+      const key = sb0.constText((cur.key as any).c, (cur.key as any).t);
+      if (!seen.has(key)) cases.push({ key, blk: b });
+      seen.add(key);
+      const nx = f.blocks[b]!.succs[1]!;
+      if (nx === bi || f.blocks[nx]!.preds.length !== 1 || cases.length > 4096) break;
+      const t2 = tail(nx, true);
+      if (!t2 || t2.x !== h.x) break;
+      b = nx;
+      cur = t2;
+    }
+    if (cases.length < SWITCH_MIN) return null;
+    return { x: h.x, cases, last: b };
+  }
+
   /** Ordered parameters (registers) of a set: D, recover registers, then the rest ascending. */
   order(s: Iterable<number>): number[] {
     const set = new Set(s);
@@ -767,16 +821,43 @@ class SegB {
     return { t: `[${n2(o.f)}, []]`, atom: true };
   }
   constText(c: any, t: number): string {
-    if (c === null) return "null";
-    if (typeof c === "boolean") return String(c);
-    if (typeof c === "string") return strLit(c);
-    const ti = this.e.info(t);
-    if ("i" in c) {
-      const w = ti.ik ? Number(ti.ik.replace(/\D/g, "")) : 64;
-      return n2(BigInt.asIntN(w, BigInt(c.i)));
-    }
-    const b = BigInt(c.fbits);
-    return n2(BigInt.asIntN(ti.fbits ?? 64, b));
+    return constTextOf(this.e, c, t);
+  }
+  /**
+   * A switch chain as one dispatch: look up x's value in a table of case
+   * entries (each an interface whose `o` jumps to its case with the edge
+   * moves), with the live values passed as `a`; the default jumps on.
+   */
+  switchOp(sw: SwitchChain): void {
+    const fe = this.fe;
+    const x = this.atom({ r: sw.x });
+    // every value a target may need, as A
+    const live = this.liveBefore[this.idx] ?? new Set<number>();
+    const regs = [...this.env.keys()].filter((r) => r === D_REG || live.has(r));
+    const avals = regs.map((r) => this.forceAtomText(this.env.get(r)!));
+    const saved = { env: this.env, H: this.H, K: this.K, X: this.X, F: this.Fv };
+    const def = this.jumpTo(sw.last, 1);
+    this.env = new Map(regs.map((r, i) => [r, { t: `this["a"][${i}]`, atom: true }]));
+    this.H = 'this["h"]';
+    this.K = 'this["k"]';
+    this.X = 'this["x"]';
+    this.Fv = 'this["f"]';
+    const tab = `SW${fe.fid}_${sw.cases[0]!.blk}`;
+    const props: string[] = [];
+    sw.cases.forEach((c, j) => {
+      const nm = `sw${fe.fid}_${c.blk}_${j}`;
+      this.e.out.push(`interface ${nm} extends EB { o: ${this.jumpTo(c.blk, 0)} }`);
+      props.push(`${c.key}: ${nm};`);
+    });
+    this.env = saved.env;
+    this.H = saved.H;
+    this.K = saved.K;
+    this.X = saved.X;
+    this.Fv = saved.F;
+    this.e.out.push(`interface ${tab} { ${props.join(" ")} }`);
+    this.end(
+      `${x} extends keyof ${tab} ? (${tab}[${x}] & R.EA<${this.H}, ${this.K}, ${this.X}, ${this.Fv}, [${avals.join(", ")}]>)["o"] : ${def}`,
+    );
   }
   /** An operand as an atom (binding its expression if needed). */
   atom(o: Operand): string {
@@ -1196,6 +1277,10 @@ class SegB {
         return;
       }
       case "binop":
+        if (this.idx === b.instrs.length - 2) {
+          const sw = this.fe.switchAt(bi);
+          if (sw) return this.switchOp(sw);
+        }
         return this.binop(ins);
       case "unop": {
         const x = this.val(ins.x).t;
@@ -2071,6 +2156,29 @@ function readsHeap(ins: Instr, e: Emitter): boolean {
     default:
       return false;
   }
+}
+
+interface SwitchChain {
+  x: number;
+  /** case constants (key text) and the block whose "then" edge they take */
+  cases: { key: string; blk: number }[];
+  /** the last block of the chain (its "else" edge is the default) */
+  last: number;
+}
+/** Fewest cases worth a table dispatch. */
+const SWITCH_MIN = 4;
+
+function constTextOf(e: Emitter, c: any, t: number): string {
+  if (c === null) return "null";
+  if (typeof c === "boolean") return String(c);
+  if (typeof c === "string") return strLit(c);
+  const ti = e.info(t);
+  if ("i" in c) {
+    const w = ti.ik ? Number(ti.ik.replace(/\D/g, "")) : 64;
+    return n2(BigInt.asIntN(w, BigInt(c.i)));
+  }
+  const b = BigInt(c.fbits);
+  return n2(BigInt.asIntN(ti.fbits ?? 64, b));
 }
 
 /** A conditional type in a check position needs parentheses. */

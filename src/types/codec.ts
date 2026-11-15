@@ -1,3 +1,5 @@
-// Codecs between reference values / machine state and type-level source
-// text (docs/DESIGN.md "Type level"). Each stage 4 module adds its part.
+// Reference value + IR type <-> type literal source text, for every
+// type-level encoding (docs/DESIGN.md "Type-level encodings"). Each value
+// kind keeps its converters in its own module, re-exported here.
+export * from "./codec-int.ts";
 export * from "./codec-heap.ts";

@@ -1,7 +1,8 @@
 //go:build !gointypes
 
 // go-in-types overlay: the harness's native main. Files named on the command
-// line are read from disk into the in-memory FS, then check runs.
+// line are read from disk into the in-memory FS, then check runs (or boot
+// and checkWarm, with $GOINTYPES_WARM).
 package main
 
 import (
@@ -25,6 +26,18 @@ func main() {
 			}
 			files["/p/"+filepath.Base(a)] = string(b)
 		}
+	}
+	// GOINTYPES_WARM=<file>: boot with <file> as main.ts (output dropped),
+	// then checkWarm the real main.ts: the boot image's path, natively.
+	if w := os.Getenv("GOINTYPES_WARM"); w != "" { //nolint:forbidigo
+		b, err := os.ReadFile(w)
+		if err != nil {
+			rt.Exit(3)
+		}
+		real := files[mainPath]
+		files[mainPath] = string(b)
+		bootQuiet(files, args)
+		rt.Exit(checkWarm(real))
 	}
 	rt.Exit(check(files, args))
 }

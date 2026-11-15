@@ -15,6 +15,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/microsoft/typescript-go/internal/ast"
 	"github.com/microsoft/typescript-go/internal/compiler"
 	"github.com/microsoft/typescript-go/internal/execute/tsc"
 	"github.com/microsoft/typescript-go/internal/tsoptions"
@@ -51,8 +52,77 @@ func check(files map[string]string, args []string) int {
 	if beforeCheck != nil {
 		beforeCheck()
 	}
-	sys := &memSys{fs: vfstest.FromMapWithClock(files, true, fixedClock{}), out: &bytes.Buffer{}}
-	commandLine := tsoptions.ParseCommandLine(args, sys)
+	sys := newSys(files)
+	status := run(sys, tsoptions.ParseCommandLine(args, sys), nil)
+	rt.Write(1, sys.out.Bytes())
+	return status
+}
+
+// Boot image entries (ts-in-types stage 3). boot runs one full check (the
+// warm-up) and keeps its parsed command line and every parsed and bound
+// source file but /p/main.ts (the libs); checkWarm then checks a new
+// /p/main.ts with both reused, as a watch compiler host reuses unchanged
+// files. A host snapshots the machine after boot returns (the image) and
+// calls checkWarm from it.
+type warmState struct {
+	files       map[string]string
+	commandLine *tsoptions.ParsedCommandLine
+	sources     map[string]*ast.SourceFile
+}
+
+var warm *warmState
+
+const mainPath = "/p/main.ts"
+
+func boot(files map[string]string, args []string) int {
+	status, out := bootQuiet(files, args)
+	rt.Write(1, out)
+	return status
+}
+
+// bootQuiet is boot without printing the warm-up's output.
+func bootQuiet(files map[string]string, args []string) (int, []byte) {
+	sys := newSys(files)
+	warm = &warmState{files: files, commandLine: tsoptions.ParseCommandLine(args, sys), sources: map[string]*ast.SourceFile{}}
+	return run(sys, warm.commandLine, warm), sys.out.Bytes()
+}
+
+func checkWarm(main string) int {
+	files := make(map[string]string, len(warm.files))
+	for k, v := range warm.files {
+		files[k] = v
+	}
+	files[mainPath] = main
+	sys := newSys(files)
+	status := run(sys, warm.commandLine, warm)
+	rt.Write(1, sys.out.Bytes())
+	return status
+}
+
+// reuseHost returns the kept source files and keeps new ones but main.ts.
+type reuseHost struct {
+	compiler.CompilerHost
+	w *warmState
+}
+
+func (h *reuseHost) GetSourceFile(opts ast.SourceFileParseOptions) *ast.SourceFile {
+	if f, ok := h.w.sources[opts.FileName]; ok {
+		return f
+	}
+	f := h.CompilerHost.GetSourceFile(opts)
+	if f != nil && opts.FileName != mainPath {
+		h.w.sources[opts.FileName] = f
+	}
+	return f
+}
+
+func newSys(files map[string]string) *memSys {
+	return &memSys{fs: vfstest.FromMapWithClock(files, true, fixedClock{}), out: &bytes.Buffer{}}
+}
+
+// run is the rest of a check (tsc's performCompilation for this command
+// line), printing to sys.out; with w, source files are reused through w.
+func run(sys *memSys, commandLine *tsoptions.ParsedCommandLine, w *warmState) int {
 	locale := commandLine.Locale()
 	reportDiagnostic := tsc.CreateDiagnosticReporter(sys, sys.Writer(), locale, commandLine.CompilerOptions())
 	status := tsc.ExitStatusDiagnosticsPresent_OutputsSkipped
@@ -63,6 +133,9 @@ func check(files map[string]string, args []string) int {
 	} else {
 		reportErrorSummary := tsc.CreateReportErrorSummary(sys, locale, commandLine.CompilerOptions())
 		host := compiler.NewCachedFSCompilerHost(sys.GetCurrentDirectory(), sys.FS(), sys.DefaultLibraryPath(), &tsc.ExtendedConfigCache{}, nil)
+		if w != nil {
+			host = &reuseHost{CompilerHost: host, w: w}
+		}
 		program := compiler.NewProgram(compiler.ProgramOptions{Config: commandLine, Host: host})
 		result, _ := tsc.EmitAndReportStatistics(tsc.EmitInput{
 			Sys: sys, ProgramLike: program, Program: program, Config: commandLine,
@@ -71,6 +144,5 @@ func check(files map[string]string, args []string) int {
 		})
 		status = result.Status
 	}
-	rt.Write(1, sys.out.Bytes())
 	return int(status)
 }

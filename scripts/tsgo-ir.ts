@@ -53,10 +53,14 @@ const out = join(outDir, "prog.json");
 const t0 = performance.now();
 // gointypes: the bodyless gointypes/rt intrinsics and the harness's engine
 // main (overlay/tsgo/cmd/tsgo/main_engine.go), so the program has no os.
-// The host calls check (scripts/run.ts --check), so it is an entry point.
+// The host calls check (scripts/run.ts --check), so it is an entry point;
+// boot and checkWarm are the boot image's entries (ts-in-types stage 3).
 const tags = extra.includes("-tags") ? [] : ["-tags", "purego,gointypes"];
+const harness = "github.com/microsoft/typescript-go/cmd/tsgo";
 const entry =
-  config === "tsgo" ? ["-entry", "check=github.com/microsoft/typescript-go/cmd/tsgo.check"] : [];
+  config === "tsgo"
+    ? ["check", "boot", "checkWarm"].flatMap((e) => ["-entry", `${e}=${harness}.${e}`])
+    : [];
 const r = runFrontend(join(tsgoDir, "cmd/tsgo"), out, "none", [
   "-overlay",
   overlay,

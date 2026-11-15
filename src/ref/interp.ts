@@ -203,6 +203,25 @@ export class Machine {
     this.pushFrame(this.prog.init, [], null, -1, false);
   }
 
+  /**
+   * After a finished run (empty stack, no panic): a call of function `fid`
+   * with host values `args` as a new entry, without init. Globals and heap
+   * carry over (a boot image's later checks); output so far is kept.
+   */
+  callEntry(fid: number, args: any[]): void {
+    if (this.stack.length > 0 || this.curPanic !== null)
+      throw new Error("callEntry: the machine is still running or panicking");
+    const d = this.dfunc(fid);
+    const regs = d.template.slice();
+    args.forEach((a, i) => (regs[i] = a));
+    const fr = new Frame(d, regs, ENTRY_DST, false);
+    this.stack.push(fr);
+    this.top = fr;
+    this.exitCode = null;
+    this.entryResult = undefined;
+    this.dying = null;
+  }
+
   // -------------------------------------------------------------- run loop
 
   /** Runs until done or until `limit` total ops have run. */

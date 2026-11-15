@@ -18,6 +18,8 @@ import {
   typesToSnapshot,
   encSnapValue,
   decNat,
+  globalIds,
+  initialHeap,
 } from "../../src/types/codec-heap.ts";
 import { repo, runCases, scratch, type Case } from "./tsrs-harness.ts";
 
@@ -89,6 +91,38 @@ test("tsrs reads the encoded heap", () => {
   const res = runCases(
     "codec-read.ts",
     `import type * as H from "../../src/types/heap.ts";\nimport type { Heap } from "./codec-heap.gen.ts";`,
+    cases,
+  );
+  expect(res.other).toEqual([]);
+  expect(res.failures).toEqual([]);
+}, 300_000);
+
+test("initial heap: every global reads as its zero value", () => {
+  const prog = program("structs_pointers");
+  const ti = new TypeInfo(prog);
+  const ids = globalIds(prog);
+  mkdirSync(scratch, { recursive: true });
+  writeFileSync(
+    join(scratch, "codec-init.gen.ts"),
+    initialHeap(prog, "../../src/types/heap.gen.ts"),
+  );
+  // the reference numbers the same globals first, in order
+  const snap = snapAt(prog, 0);
+  const cases: Case[] = [];
+  prog.globals.forEach((g, k) => {
+    const n = prog.types[g.type]!.slots;
+    expect(ids[k]).toBe(snap.globals[k] < 0 ? "00000" : idOf(snap.globals[k]));
+    if (n === 0 || n > 256) return;
+    const z = ti.zeroText(g.type);
+    cases.push({
+      name: `global ${g.name}`,
+      actual: `H.LoadK<Heap, [${JSON.stringify(ids[k])}, "0"], [${z.join(", ")}]>`,
+      expected: `[${z.join(", ")}]`,
+    });
+  });
+  const res = runCases(
+    "codec-init.ts",
+    `import type * as H from "../../src/types/heap.ts";\nimport type { Heap } from "./codec-init.gen.ts";`,
     cases,
   );
   expect(res.other).toEqual([]);

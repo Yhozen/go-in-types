@@ -69,6 +69,27 @@ export function strLit(s: string): string {
 
 const lit = (s: string) => strLit(s);
 
+// ------------------------------------------------------------ hooks
+
+/** Encoding of a value kind owned by another module (maps: src/types/map.ts). */
+export interface ValueHook {
+  /** live reference value -> text (Enc) */
+  enc?: (v: any, t: number, e: Enc) => string;
+  /** snapshot JSON value -> text */
+  encSnap?: (v: any, t: number, ti: TypeInfo) => string;
+  /** evaluated type-level value -> snapshot JSON value */
+  dec?: (v: any, t: number, d: Dec) => any;
+  /** a snapshot object of this kind ({ k: "m" } / { k: "c" }) -> heap object text */
+  encObject?: (o: any, k: number, ti: TypeInfo) => ObjText;
+}
+/** Hooks for maps and channels; the str/map codec fills `map`. */
+export const codecHooks: { map?: ValueHook; chan?: ValueHook } = {};
+function hook(kind: "map" | "chan"): ValueHook {
+  const h = codecHooks[kind];
+  if (!h) throw new Error(`codec-heap: no codec for ${kind} values (codecHooks.${kind})`);
+  return h;
+}
+
 // ------------------------------------------------------------ values
 
 type Kind =
@@ -194,9 +215,12 @@ export class Enc {
         return `[${(v as any[]).map((x, i) => this.value(x, st[i]!)).join(", ")}]`;
       }
       case "map":
-      case "chan":
+      case "chan": {
         if (v === null) return "null";
-        throw new Error(`codec-heap: ${ti.kind(t)} values belong to their own codec`);
+        const h = hook(ti.kind(t) as "map" | "chan");
+        if (!h.enc) throw new Error("codec-heap: hook without enc");
+        return h.enc(v, t, this);
+      }
     }
   }
 }
@@ -487,9 +511,12 @@ export class Dec {
         return (v as any[]).map((x, i) => this.value(x, st[i]!));
       }
       case "map":
-      case "chan":
+      case "chan": {
         if (v === null) return null;
-        throw new Error(`codec-heap: ${ti.kind(t)} values belong to their own codec`);
+        const h = hook(ti.kind(t) as "map" | "chan");
+        if (!h.dec) throw new Error("codec-heap: hook without dec");
+        return h.dec(v, t, this);
+      }
     }
   }
 }
@@ -600,9 +627,12 @@ export function encSnapValue(ti: TypeInfo, v: any, t: number): string {
       return `[${(v as any[]).map((x, i) => encSnapValue(ti, x, st[i]!)).join(", ")}]`;
     }
     case "map":
-    case "chan":
+    case "chan": {
       if (v === null) return "null";
-      throw new Error(`codec-heap: ${ti.kind(t)} values belong to their own codec`);
+      const h = hook(ti.kind(t) as "map" | "chan");
+      if (!h.encSnap) throw new Error("codec-heap: hook without encSnap");
+      return h.encSnap(v, t, ti);
+    }
   }
 }
 const snapId = (k: number) => (k < 0 ? "0".repeat(ID_WIDTH) : idOf(k));
@@ -686,6 +716,33 @@ export function typesToSnapshot(prog: Program, st: TypesState, base: any): any {
     }),
   );
   return partial;
+}
+
+// ------------------------------------------------------------ globals
+
+/**
+ * Object id of every global (heap.ts header): non-zero-size globals get
+ * ids 1, 2, ... in `Program.globals` order, zero-size ones the zero-size
+ * object "00000". A global's address is `[id, "0"]`.
+ */
+export function globalIds(prog: Program): string[] {
+  let k = 0;
+  return prog.globals.map((g) =>
+    prog.types[g.type]!.slots === 0 ? "0".repeat(ID_WIDTH) : idOf(k++),
+  );
+}
+
+/** The heap at program start: every global zeroed (flat up to 16 slots, else lazy). */
+export function initialHeap(prog: Program, imp: string, name = "Heap"): string {
+  const ti = new TypeInfo(prog);
+  const objs: ObjText[] = [];
+  for (const g of prog.globals) {
+    const n = prog.types[g.type]!.slots;
+    if (n === 0) continue;
+    if (n <= 16) objs.push({ slots: ti.zeroText(g.type), lazy: false });
+    else objs.push({ slots: Array(n).fill(undefined), lazy: true, zero: ti.zeroText(g.type) });
+  }
+  return encodeHeap(objs, imp, name);
 }
 
 // ------------------------------------------------------------ program tables

@@ -34,6 +34,7 @@
 // scripts/bench-int.ts; see the table at the end of this header).
 //
 // COST-TABLE
+import type * as P from "./int-pairs.gen.ts";
 import type * as T from "./int-tables.gen.ts";
 
 /** An integer kind: signedness and width. */
@@ -129,11 +130,15 @@ type Cut8<S extends string> =
 /** A 64-bit canonical form wrapped to kind W. */
 export type Fit<K extends W, S extends string> = K extends "i64" | "u64"
   ? S
-  : K extends "i32" | "u32"
-    ? Cut8<S>
-    : K extends "i16" | "u16"
-      ? Cut4<S>
-      : Cut2<S>;
+  : S extends keyof T.WRAP8
+    ? K extends "i8" | "u8"
+      ? T.WRAP8[S]
+      : S
+    : K extends "i32" | "u32"
+      ? Cut8<S>
+      : K extends "i16" | "u16"
+        ? Cut4<S>
+        : Cut2<S>;
 
 /** A trimmed (or 17-nibble) nibble string, possibly longer than W, wrapped to kind W. */
 type Wrap<K extends W, S extends string> = K extends "i64" | "u64" ? Trim<Take16<S>> : Fit<K, S>;
@@ -294,6 +299,60 @@ type Sub64<A extends string, B extends string> = A extends Nib
     ? A
     : SubL<A, B, "0", "">;
 
+// Short paths. Forms of up to three nibbles (-2048..2047: indices, bytes,
+// ast.Kind values) split into hi = floor(a / 16), a form of one or two
+// nibbles, and lo = a & 15; the pair tables (int-pairs.gen.ts) then do the
+// hi part in one lookup. Operands of one or two nibbles need no split.
+
+/** 16 h + d for a nibble d and a canonical form h. */
+type Join<D extends string, H extends string> = H extends "0"
+  ? D extends PosNib
+    ? D
+    : `${D}0`
+  : H extends "f"
+    ? D extends NegNib
+      ? D
+      : `${D}f`
+    : `${D}${H}`;
+
+/** a + b for forms of up to three nibbles. */
+type Add3<
+  A extends string,
+  B extends string,
+> = T.ADD[`0${T.LO3[A]}${T.LO3[B]}`] extends `${infer d}${infer c}`
+  ? Join<
+      d,
+      c extends "0" ? P.ADD2[`${T.HI3[A]}_${T.HI3[B]}`] : T.INC3[P.ADD2[`${T.HI3[A]}_${T.HI3[B]}`]]
+    >
+  : never;
+
+/** a + b: one lookup for one or two nibbles, the split for three, else the loop. */
+type AddS<A extends string, B extends string> = string extends P.ADD2[`${A}_${B}`]
+  ? A extends keyof T.TODEC
+    ? B extends keyof T.TODEC
+      ? Add3<A, B>
+      : Add64<A, B>
+    : Add64<A, B>
+  : P.ADD2[`${A}_${B}`];
+
+/** a - b as a + (-b) on the short paths. */
+type SubS<A extends string, B extends string> = B extends keyof T.NEG3
+  ? string extends P.ADD2[`${A}_${T.NEG3[B]}`]
+    ? A extends keyof T.TODEC
+      ? T.NEG3[B] extends keyof T.TODEC
+        ? Add3<A, T.NEG3[B]>
+        : Sub64<A, B>
+      : Sub64<A, B>
+    : P.ADD2[`${A}_${T.NEG3[B]}`]
+  : Sub64<A, B>;
+
+/** a < b for forms of up to three nibbles; Hi is HI3 (signed) or HIU3 (unsigned). */
+type Lt3<
+  A extends string,
+  B extends string,
+  Hi extends Record<string, string>,
+> = Hi[A] extends Hi[B] ? T.NLT[`${T.LO3[A]}${T.LO3[B]}`] : P.LT2[`${Hi[A]}_${Hi[B]}`];
+
 /** a + 1 for canonical a (the carry runs through low "f" nibbles). */
 type Inc<A extends string, O extends string> = A extends `${infer a}${infer R}`
   ? a extends "f"
@@ -308,7 +367,7 @@ type Inc<A extends string, O extends string> = A extends `${infer a}${infer R}`
   : "0";
 
 /** -a, 64-bit wrapping. */
-type Neg64<A extends string> = A extends Nib ? T.NEG1[A] : Inc<NotL<A, "">, "">;
+type Neg64<A extends string> = A extends keyof T.NEG3 ? T.NEG3[A] : Inc<NotL<A, "">, "">;
 
 // ---- bitwise ----
 
@@ -321,7 +380,7 @@ type NotL<
     ? NotL<R, `${O}${T.NOT[a]}`>
     : O;
 
-type Not64<A extends string> = A extends Nib ? T.NOT[A] : NotL<A, "">;
+type Not64<A extends string> = A extends keyof T.TODEC ? T.NOT3[A] : NotL<A, "">;
 
 type AndL<A extends string, B extends string, O extends string> = A extends `${infer a}${infer AR}`
   ? B extends `${infer b}${infer BR}`
@@ -400,7 +459,7 @@ type ShrBits<
   : `${O}${T.SHR[`${R}${P}${Arith extends true ? T.EXT[P] : "0"}`]}`;
 
 /** a << 4 q + r for 0 <= 4 q + r < 64, 64-bit. */
-type ShlBy<A extends string, Q extends string, R extends string> = Trim<
+type ShlL<A extends string, Q extends string, R extends string> = Trim<
   Take16<`${T.ZEROS[Q]}${R extends "0" ? A : ShlBits<A, R, "0", "">}`>
 >;
 
@@ -414,7 +473,7 @@ type ShrBy<A extends string, Q extends string, R extends string> =
     : never;
 
 /** a >> 4 q + r, arithmetic (floor(a / 2^n)), for 0 <= 4 q + r < 64. */
-type SarBy<A extends string, Q extends string, R extends string> =
+type SarL<A extends string, Q extends string, R extends string> =
   Drop<A, T.ZEROS[Q]> extends infer S extends string
     ? S extends `${infer s}${infer SR}`
       ? R extends "0"
@@ -422,6 +481,32 @@ type SarBy<A extends string, Q extends string, R extends string> =
         : Trim<ShrBits<SR, R, s, "", true>>
       : Ext<A>
     : never;
+
+/** Short counts for forms of up to three nibbles: ZEROS[q] then four nibbles stay within 16. */
+type ShortQ = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "a" | "b" | "c";
+
+/** a << 4 q + r (64-bit), one lookup for forms of up to three nibbles. */
+type ShlBy<A extends string, Q extends string, R extends string> = A extends "0"
+  ? "0"
+  : A extends keyof T.TODEC
+    ? Q extends ShortQ
+      ? `${T.ZEROS[Q]}${R extends "0" ? A : T.SHL3[`${A}_${R}`]}`
+      : ShlL<A, Q, R>
+    : ShlL<A, Q, R>;
+
+/** a >> r bits (r 0..3) for a form of up to three nibbles. */
+type Sar3<A extends string, R extends string> = R extends "0" ? A : T.SAR3[`${A}_${R}`];
+
+/** a >> 4 q + r, arithmetic, with table steps for forms of up to three nibbles. */
+type SarBy<A extends string, Q extends string, R extends string> = A extends keyof T.TODEC
+  ? Q extends "0"
+    ? Sar3<A, R>
+    : Q extends "1"
+      ? Sar3<T.HI3[A], R>
+      : Q extends "2"
+        ? Sar3<T.HI3[T.HI3[A]], R>
+        : Ext<A>
+  : SarL<A, Q, R>;
 
 // ---- comparison (64-bit) ----
 //
@@ -466,17 +551,17 @@ type LtG<A extends string, B extends string, U extends boolean> =
         : U
     : never;
 
-type LtS<A extends string, B extends string> = A extends Nib
-  ? B extends Nib
-    ? T.LT1[`${A}${B}`]
+type LtS<A extends string, B extends string> = A extends keyof T.TODEC
+  ? B extends keyof T.TODEC
+    ? Lt3<A, B, T.HI3>
     : LtG<A, B, false>
   : A extends B
     ? false
     : LtG<A, B, false>;
 
-type LtU<A extends string, B extends string> = A extends Nib
-  ? B extends Nib
-    ? T.ULT1[`${A}${B}`]
+type LtU<A extends string, B extends string> = A extends keyof T.TODEC
+  ? B extends keyof T.TODEC
+    ? Lt3<A, B, T.HIU3>
     : LtG<A, B, true>
   : A extends B
     ? false
@@ -506,6 +591,10 @@ type UMag<K extends W, A extends string> = A extends NegForm
 /** The integer -u (Neg true) or u, for |result| <= 2^63 (64-bit wrapping of 2^63). */
 type FromS<N, U extends string> =
   Trim<Take16<`${U}0`>> extends infer P extends string ? (N extends true ? Neg64<P> : P) : never;
+
+/** The integer -u (N true) or u for u < 2^63 (quotients and remainders: no wraparound). */
+type FromD<N, U extends string> =
+  Trim<`${U}0`> extends infer P extends string ? (N extends true ? Neg64<P> : P) : never;
 
 /** The kind-K form of magnitude u < 2^w. */
 type FromU<K extends W, U extends string> = Wrap<K, Trim<`${U}0`>>;
@@ -702,18 +791,65 @@ type UDivMod<N extends string, D extends string> = D extends Nib
   ? ShortDiv<Rev<N, "">, D, "0", "">
   : PrimeDiv<Rev<N, "">, D, D, "">;
 
-/** [a / b, a % b] signed, truncated (b is not 0, 1 or -1). */
+type Fst<X> = X extends [infer F, unknown] ? F : never;
+type Snd<X> = X extends [unknown, infer S] ? S : never;
+
+/** Short division of a form n < 2048 by a nibble d, most significant nibble first: [n / d, n % d]. */
+type QR3<N extends string, D extends string> = QStep2<
+  T.DIV1[`0${T.LO3[T.HI3[T.HI3[N]]]}${D}`],
+  N,
+  D
+>;
+type QStep2<X extends string, N extends string, D extends string> = X extends `${infer q}${infer r}`
+  ? QStep1<T.DIV1[`${r}${T.LO3[T.HI3[N]]}${D}`], q, N, D>
+  : never;
+type QStep1<
+  X extends string,
+  Q extends string,
+  N extends string,
+  D extends string,
+> = X extends `${infer q}${infer r}` ? QStep0<T.DIV1[`${r}${T.LO3[N]}${D}`], `${q}${Q}`> : never;
+type QStep0<X extends string, Q extends string> = X extends `${infer q}${infer r}`
+  ? [T.MAG3[`${q}${Q}`], T.MAG3[`${r}00`]]
+  : never;
+
+/** [a / b, a % b] for |a| < 2048 and |b| < 16: signs SA, SB ("-" or "+"), |a| AA, |b| D. */
+type QRS3<SA extends string, SB extends string, AA extends string, D extends string> =
+  QR3<AA, D> extends [infer Q extends string, infer R extends string]
+    ? [`${SA}${SB}` extends "-+" | "+-" ? T.NEGX[Q] : Q, SA extends "-" ? T.NEGX[R] : R]
+    : never;
+
+/** Whether the short division applies: |a| < 2048 (not -2048) and 0 < |b| < 16. */
+type Short<A extends string, B extends string> = A extends keyof T.NEG3
+  ? B extends keyof T.DMAG
+    ? true
+    : false
+  : false;
+
+/** [a / b, a % b] signed, truncated (b is not 0). */
 type QuoRemS<A extends string, B extends string> =
+  Short<A, B> extends true
+    ? QRS3<T.SGN3[A], T.SGN3[B], T.ABS3[A], T.DMAG[B & keyof T.DMAG]>
+    : QuoRemSG<A, B>;
+
+type QuoRemSG<A extends string, B extends string> =
   ToMag<A> extends [infer NA, infer UA extends string]
     ? ToMag<B> extends [infer NB, infer UB extends string]
       ? UDivMod<UA, UB> extends [infer Q extends string, infer R extends string]
-        ? [FromS<NA extends NB ? false : true, Q>, FromS<NA, R>]
+        ? [FromD<NA extends NB ? false : true, Q>, FromD<NA, R>]
         : never
       : never
     : never;
 
 /** [a / b, a % b] unsigned of kind K (b is not 0). */
 type QuoRemU<K extends W, A extends string, B extends string> =
+  Short<A, B> extends true
+    ? `${T.SGN3[A]}${T.SGN3[B]}` extends "++"
+      ? QR3<A, T.DMAG[B & keyof T.DMAG]>
+      : QuoRemUG<K, A, B>
+    : QuoRemUG<K, A, B>;
+
+type QuoRemUG<K extends W, A extends string, B extends string> =
   UDivMod<UMag<K, A>, UMag<K, B>> extends [infer Q extends string, infer R extends string]
     ? [FromU<K, Q>, FromU<K, R>]
     : never;
@@ -741,9 +877,9 @@ type MagDec<U extends string> =
 // =============================================================== the API
 
 /** a + b. */
-export type Add<K extends W, A extends string, B extends string> = Fit<K, Add64<A, B>>;
+export type Add<K extends W, A extends string, B extends string> = Fit<K, AddS<A, B>>;
 /** a - b. */
-export type Sub<K extends W, A extends string, B extends string> = Fit<K, Sub64<A, B>>;
+export type Sub<K extends W, A extends string, B extends string> = Fit<K, SubS<A, B>>;
 /** a * b. */
 export type Mul<K extends W, A extends string, B extends string> = Fit<K, Mul64<A, B>>;
 
@@ -754,11 +890,11 @@ export type Quo<K extends W, A extends string, B extends string> = B extends "0"
     ? QuoU<K, A, B>
     : QuoS<K, A, B>;
 
-type QuoS<K extends W, A extends string, B extends string> = A extends Nib
-  ? B extends Nib
-    ? T.QUO1[`${A}${B}`]
+type QuoS<K extends W, A extends string, B extends string> = string extends T.QUO1[`${A}${B}`]
+  ? Short<A, B> extends true
+    ? Fit<K, Fst<QuoRemS<A, B>>>
     : QuoSG<K, A, B>
-  : QuoSG<K, A, B>;
+  : T.QUO1[`${A}${B}`];
 
 type QuoSG<K extends W, A extends string, B extends string> = B extends "1"
   ? A
@@ -770,13 +906,14 @@ type QuoSG<K extends W, A extends string, B extends string> = B extends "1"
           ? SarBy<Add64<A, T.POW2M1[B]>, q, r>
           : SarBy<A, q, r>
         : never
-      : QuoRemS<A, B>[0];
+      : Fst<QuoRemS<A, B>>;
 
-type QuoU<K extends W, A extends string, B extends string> = A extends PosNib
-  ? B extends PosNib
-    ? T.QUO1[`${A}${B}`]
-    : QuoUG<K, A, B>
-  : QuoUG<K, A, B>;
+type QuoU<K extends W, A extends string, B extends string> =
+  Short<A, B> extends true
+    ? `${T.SGN3[A]}${T.SGN3[B]}` extends "++"
+      ? Fst<QR3<A, T.DMAG[B & keyof T.DMAG]>>
+      : QuoUG<K, A, B>
+    : QuoUG<K, A, B>;
 
 type QuoUG<K extends W, A extends string, B extends string> = B extends "1"
   ? A
@@ -786,7 +923,7 @@ type QuoUG<K extends W, A extends string, B extends string> = B extends "1"
         ? ShrU<K, A, q, r>
         : SarBy<A, q, r>
       : never
-    : QuoRemU<K, A, B>[0];
+    : Fst<QuoRemU<K, A, B>>;
 
 /** a % b, with the sign of a; MinInt % -1 is 0; `DivZero` when b is 0. */
 export type Rem<K extends W, A extends string, B extends string> = B extends "0"
@@ -795,31 +932,32 @@ export type Rem<K extends W, A extends string, B extends string> = B extends "0"
     ? RemU<K, A, B>
     : RemS<A, B>;
 
-type RemS<A extends string, B extends string> = A extends Nib
-  ? B extends Nib
-    ? T.REM1[`${A}${B}`]
+type RemS<A extends string, B extends string> = string extends T.REM1[`${A}${B}`]
+  ? Short<A, B> extends true
+    ? Snd<QuoRemS<A, B>>
     : RemSG<A, B>
-  : RemSG<A, B>;
+  : T.REM1[`${A}${B}`];
 
 type RemSG<A extends string, B extends string> = B extends "1" | "f"
   ? "0"
   : B extends keyof T.POW2
     ? A extends NegForm
-      ? QuoRemS<A, B>[1]
+      ? Snd<QuoRemS<A, B>>
       : AndL<A, T.POW2M1[B], "">
-    : QuoRemS<A, B>[1];
+    : Snd<QuoRemS<A, B>>;
 
-type RemU<K extends W, A extends string, B extends string> = A extends PosNib
-  ? B extends PosNib
-    ? T.REM1[`${A}${B}`]
-    : RemUG<K, A, B>
-  : RemUG<K, A, B>;
+type RemU<K extends W, A extends string, B extends string> =
+  Short<A, B> extends true
+    ? `${T.SGN3[A]}${T.SGN3[B]}` extends "++"
+      ? Snd<QR3<A, T.DMAG[B & keyof T.DMAG]>>
+      : RemUG<K, A, B>
+    : RemUG<K, A, B>;
 
 type RemUG<K extends W, A extends string, B extends string> = B extends "1"
   ? "0"
   : B extends keyof T.POW2
     ? AndL<A, T.POW2M1[B], "">
-    : QuoRemU<K, A, B>[1];
+    : Snd<QuoRemU<K, A, B>>;
 
 /** a & b. */
 export type And<_K extends W, A extends string, B extends string> = And64<A, B>;

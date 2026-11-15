@@ -31,7 +31,10 @@ every parsed and bound source file but `/p/main.ts`) and `checkWarm(main)`
 (a check of a new `/p/main.ts` reusing both through a compiler host that
 returns the kept `SourceFile`s, as the watch host does). A host snapshots
 the machine after `boot` and calls `checkWarm` from the snapshot
-(`Machine.callEntry`). Natively, `GOINTYPES_WARM=<file>` makes the overlay
+(`Machine.callEntry`). `checkWarm` doesn't rebuild the in-memory FS: path-only
+queries (`FileExists`, `DirectoryExists`, memoised at boot, so the warm-up's
+answers are in the image) go to the boot FS, `ReadFile("/p/main.ts")` decodes
+the new text as vfstest does, and anything else builds the full FS on first use. Natively, `GOINTYPES_WARM=<file>` makes the overlay
 binary boot on `<file>` and `checkWarm` the real `main.ts`.
 
 Files that must disappear map to the package's `empty.go` (go/packages'

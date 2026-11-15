@@ -78,7 +78,7 @@ export type Type =
   | { k: "interface"; methods: string[]; sigs: TypeId[]; slots: 1 }
   /** Multiple results of a call; never stored in memory. */
   | { k: "tuple"; elems: TypeId[]; slots: number }
-  /** unsafe.Pointer and complex types: values exist only to be trapped on. */
+  /** unsafe.Pointer and complex types: values exist only to be trapped on; "deferstack": a frame reference (see the deferstack builtin). */
   | { k: "opaque"; what: string; slots: 1 }
   | NamedType;
 
@@ -206,7 +206,13 @@ export type Builtin =
   | "recover"
   | "close"
   /** go/ssa's "ssa:wrapnilchk": panics if the pointer is nil. */
-  | "wrapnilchk";
+  | "wrapnilchk"
+  /**
+   * go/ssa's "ssa:deferstack": no args; the result (type opaque
+   * "deferstack") names the calling frame's defer list, for `defer` with
+   * `stack` in range-over-func bodies.
+   */
+  | "deferstack";
 
 /**
  * Instructions. `dst` is the result register when the instruction has a
@@ -258,7 +264,12 @@ export type Instr =
   | { op: "if"; cond: Operand }
   | { op: "return"; results: Operand[] }
   | { op: "panic"; x: Operand }
-  | { op: "defer"; callee: Callee; args: Operand[] }
+  /**
+   * Pushes a deferred call onto the current frame's defer list, or, with
+   * `stack` (a "deferstack" value), onto that frame's: a `defer` in a
+   * range-over-func body targets the enclosing function's frame.
+   */
+  | { op: "defer"; callee: Callee; args: Operand[]; stack?: Operand }
   | { op: "runDefers" }
   /** Unsupported operation reached at run time (go, select, unsafe, ...). */
   | { op: "trap"; what: string };

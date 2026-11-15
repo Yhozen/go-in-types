@@ -60,6 +60,7 @@ const BUILTINS = new Set([
   "recover",
   "close",
   "wrapnilchk",
+  "deferstack",
 ]);
 const TERMINATORS = new Set(["jump", "if", "return", "panic"]);
 
@@ -111,7 +112,7 @@ const INSTRS: Record<string, Record<string, Kind | `${Kind}?`>> = {
   if: { cond: "op" },
   return: { results: "ops" },
   panic: { x: "op" },
-  defer: { callee: "callee", args: "ops" },
+  defer: { callee: "callee", args: "ops", stack: "op?" },
   runDefers: {},
   trap: { what: "str" },
 };

@@ -338,6 +338,8 @@ type IDefer struct {
 	Op     string    `json:"op"`
 	Callee Callee    `json:"callee"`
 	Args   []Operand `json:"args"`
+	// Stack: a deferstack value (another frame's defer list); nil = own frame.
+	Stack *Operand `json:"stack,omitempty"`
 }
 type ITrap struct {
 	Op   string `json:"op"`

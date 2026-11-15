@@ -1059,7 +1059,7 @@ class Ctx {
         };
       }
       case "defer":
-        return this.defer(ins.callee, ins.args);
+        return this.defer(ins.callee, ins.args, ins.stack);
       case "runDefers":
         return (f) => {
           if (f.defers !== null && f.defers.length > 0) {
@@ -1423,17 +1423,27 @@ class Ctx {
     };
   }
 
-  defer(c: Callee, argOps: Operand[]): Code {
+  defer(c: Callee, argOps: Operand[], stackOp?: Operand): Code {
     const args = argOps.map((o) => this.r(o));
     const na = args.length;
     const T = this.types;
+    const m = this.m;
     const ev = (f: Frame) => {
       const a = new Array(na);
       for (let i = 0; i < na; i++) a[i] = f.regs[args[i]!];
       return a;
     };
+    // With `stack`: the frame whose defer list it names (a deferstack
+    // value: that frame's stack index, live while a range-over-func body runs).
+    const sr = stackOp === undefined ? -1 : this.r(stackOp);
     const push = (f: Frame, d: Defer) => {
-      (f.defers ??= []).push(d);
+      let g = f;
+      if (sr >= 0) {
+        const k = f.regs[sr] as number;
+        if (typeof k !== "number" || k >= m.stack.length) throw new Trap("defer onto a dead frame");
+        g = m.stack[k]!;
+      }
+      (g.defers ??= []).push(d);
     };
     if ("static" in c) {
       const fid = c.static;
@@ -1622,6 +1632,8 @@ class Ctx {
           if (c.closed) throw plainError("close of closed channel");
           c.closed = true;
         };
+      case "deferstack":
+        return () => m.stack.length - 1;
       case "wrapnilchk":
         return (a) => {
           if (a[0] === null) {

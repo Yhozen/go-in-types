@@ -109,6 +109,16 @@ Rules:
   return; `recover` in a deferred call stops the panic). An unrecovered
   panic ends the run with `panic: <message>` (Go's format for the common
   value kinds) and exit status 2.
+- `defer` in a range-over-func body targets the enclosing function's
+  frame (go/ssa's `ssa:deferstack`). The front end keeps an
+  `ssa:deferstack()` call only when a closure uses it, lowered to
+  `call {builtin: "deferstack"}`: its value (type opaque "deferstack") names
+  the calling frame (in the reference, its stack index; the frame is live
+  while its loop bodies run). `defer` with `stack: <that value>` pushes onto
+  that frame's defer list; without `stack`, onto the current frame's.
+  go/ssa drops `RunDefers` from a function without `defer` statements of
+  its own, so the front end emits `runDefers` before each `return` of a
+  function that keeps the call and has none.
 - Goroutines: `go` traps. Channels: buffered queues; a receive on an empty
   channel or send on a full one traps ("deadlock"), except a receive from a
   closed channel, which yields the zero value.

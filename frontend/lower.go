@@ -21,7 +21,7 @@ import (
 var instrMapping = [][2]string{
 	{"*ssa.Alloc", "alloc"},
 	{"*ssa.Phi", "phi"},
-	{"*ssa.Call", "call (builtins: call {builtin}; float min/max: soft-float calls; complex/real/imag, unsafe.Add/Slice/String/StringData/SliceData outside the string<->slice patterns, ssa:deferstack uses outside defer: trap; math.Float*bits: changeType; ssa:deferstack: dropped)"},
+	{"*ssa.Call", "call (builtins: call {builtin}; float min/max: soft-float calls; complex/real/imag, unsafe.Add/Slice/String/StringData/SliceData outside the string<->slice patterns, math.Float*bits: changeType; ssa:deferstack: dropped when only its own function's defers use it, else call {builtin: deferstack})"},
 	{"*ssa.BinOp", "binop (float: soft-float call; complex: trap)"},
 	{"*ssa.UnOp", "* -> load, <- -> recv, - ! ^ -> unop (float -: soft-float call; complex: trap)"},
 	{"*ssa.ChangeType", "changeType"},
@@ -51,7 +51,7 @@ var instrMapping = [][2]string{
 	{"*ssa.RunDefers", "runDefers"},
 	{"*ssa.Panic", "panic"},
 	{"*ssa.Go", "trap"},
-	{"*ssa.Defer", "defer (onto a range-over-func parent's stack: trap)"},
+	{"*ssa.Defer", "defer (onto a range-over-func parent's stack: defer with stack)"},
 	{"*ssa.Send", "send"},
 	{"*ssa.Store", "store"},
 	{"*ssa.MapUpdate", "mapUpdate"},
@@ -59,6 +59,7 @@ var instrMapping = [][2]string{
 }
 
 type lowerer struct {
+	addRunDefers bool // emit runDefers before each return (see lowerBody)
 	fe       *frontend
 	f        *ssa.Function
 	regs     map[ssa.Value]int
@@ -78,6 +79,24 @@ func (fe *frontend) lowerBody(f *ssa.Function, out *Func) {
 	}
 	out.Params, out.FreeVars = len(f.Params), len(f.FreeVars)
 	l.prepass()
+	// go/ssa drops RunDefers from a function without Defer instructions,
+	// even when its range-over-func bodies defer onto its frame (through
+	// a kept ssa:deferstack() call): run them before each return.
+	// (Approximation: named results are loaded before such defers run.)
+	hasRunDefers, keptStack := false, false
+	for _, b := range f.Blocks {
+		for _, ins := range b.Instrs {
+			switch ins := ins.(type) {
+			case *ssa.RunDefers:
+				hasRunDefers = true
+			case *ssa.Call:
+				if _, dropped := l.subst[ins]; isDeferStackCall(ins) && !dropped {
+					keptStack = true
+				}
+			}
+		}
+	}
+	l.addRunDefers = keptStack && !hasRunDefers
 	for _, b := range f.Blocks {
 		for _, ins := range b.Instrs {
 			if v, ok := ins.(ssa.Value); ok {
@@ -155,7 +174,17 @@ func (l *lowerer) prepass() {
 				}
 				l.subst[c] = opInt(n, l.fe.tt.id(c.Type()))
 			case "ssa:deferstack":
-				l.subst[c] = opZero(l.fe.tt.id(c.Type()))
+				// Dropped when only this function's own defers use it
+				// (directly); otherwise lowered to the deferstack builtin.
+				own := true
+				for _, r := range *c.Referrers() {
+					if d, ok := r.(*ssa.Defer); !ok || d.DeferStack != c {
+						own = false
+					}
+				}
+				if own {
+					l.subst[c] = opZero(l.fe.tt.id(c.Type()))
+				}
 			case "SliceData", "StringData":
 				all := true
 				for _, r := range *c.Referrers() {
@@ -169,6 +198,11 @@ func (l *lowerer) prepass() {
 			}
 		}
 	}
+}
+
+func isDeferStackCall(c *ssa.Call) bool {
+	b, ok := c.Call.Value.(*ssa.Builtin)
+	return ok && b.Name() == "ssa:deferstack"
 }
 
 // isUnsafePattern: r is unsafe.String(v, n) or unsafe.Slice(v, n).
@@ -344,6 +378,9 @@ func (l *lowerer) instr(ins ssa.Instruction) {
 	case *ssa.If:
 		l.emit(IIf{Op: "if", Cond: l.op(v.Cond)})
 	case *ssa.Return:
+		if l.addRunDefers {
+			l.emit(IOp{Op: "runDefers"})
+		}
 		l.emit(IReturn{Op: "return", Results: l.ops(v.Results)})
 	case *ssa.RunDefers:
 		l.emit(IOp{Op: "runDefers"})
@@ -352,17 +389,19 @@ func (l *lowerer) instr(ins ssa.Instruction) {
 	case *ssa.Go:
 		l.trap("goroutine not supported")
 	case *ssa.Defer:
+		var stack *Operand
 		if v.DeferStack != nil {
-			if _, own := l.subst[v.DeferStack]; !own {
-				l.trap("defer in a range-over-func body not supported")
-				return
+			// The function's own ssa:deferstack() call: its own frame.
+			if c, ok := v.DeferStack.(*ssa.Call); !ok || c.Parent() != l.f || !isDeferStackCall(c) {
+				op := l.op(v.DeferStack)
+				stack = &op
 			}
 		}
 		callee, args, ok := l.callee(&v.Call)
 		if !ok {
 			return
 		}
-		l.emit(IDefer{Op: "defer", Callee: callee, Args: args})
+		l.emit(IDefer{Op: "defer", Callee: callee, Args: args, Stack: stack})
 	case *ssa.Send:
 		l.emit(ISend{Op: "send", Chan: l.op(v.Chan), Val: l.op(v.X)})
 	case *ssa.Store:
@@ -503,7 +542,9 @@ func (l *lowerer) callee(c *ssa.CallCommon) (Callee, []Operand, bool) {
 		case "complex", "real", "imag":
 			l.trap("complex numbers not supported")
 			return Callee{}, nil, false
-		case "ssa:deferstack", "Add", "Slice", "SliceData", "String", "StringData", "Alignof", "Offsetof", "Sizeof":
+		case "ssa:deferstack":
+			return Callee{Builtin: "deferstack"}, []Operand{}, true
+		case "Add", "Slice", "SliceData", "String", "StringData", "Alignof", "Offsetof", "Sizeof":
 			l.trap("unsafe." + fn.Name() + " not supported")
 			return Callee{}, nil, false
 		}

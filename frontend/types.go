@@ -158,6 +158,9 @@ func (tt *typeTable) build(t types.Type, id int) any {
 		}
 		return TTuple{K: "tuple", Elems: es, Slots: slots}
 	case *types.Named:
+		if o := t.Obj(); o.Pkg() != nil && o.Pkg().Path() == "$ssa" && o.Name() == "deferStack" {
+			return TOpaque{K: "opaque", What: "deferstack", Slots: 1} // ssa:deferstack()'s result
+		}
 		if t.TypeParams().Len() > t.TypeArgs().Len() {
 			return TOpaque{K: "opaque", What: "generic " + typeName(t), Slots: 1}
 		}

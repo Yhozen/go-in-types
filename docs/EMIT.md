@@ -155,8 +155,26 @@ Starting from any state: build `S` with tag `"j"` at the entry of the
 paused frame, or tag `"r"`/`"c"` at a call boundary; the codec
 (src/types/codec-state.ts) converts a reference snapshot into such a state.
 Every block start, every fuel point inside a block and every call's return
-point is an entry, so a pause at any of them is a valid start (not yet: a
-frame running its defers on top, or a panic in flight).
+point is an entry, so a pause at any of them is a valid start.
+
+Not startable yet (codec-state.ts `unstartable`; the codec runs the
+reference on to the next startable point, so a mid-run start lands later,
+not wrongly):
+
+- the top frame running its defers (`dmode` set): the state would be tag
+  `"r"` with a `"d"` continuation on top of K holding the remaining defer
+  list and Mode `"r"` (or the panic serial), which RetC already resumes;
+  the codec has no reference-to-`Ct<"d", …>` mapping for the top frame
+  (frames below it are mapped);
+- a panic in flight (`curPanic`/`dying`): needs the reference's panic chain
+  as `Pn` records (`[V, Recovered, Repanicked, Depth, Serial, Str]`) and
+  `Ns`, plus the unwinding frame as a `"d"` continuation with the panic's
+  serial as Mode;
+- a frame printing a fatal panic (`"q"` continuation) and builtin defers
+  (`["b:<name>", Args, Info]` records).
+
+Both the state shape and RunD support these starts already; the missing
+piece is only the codec's mapping.
 
 The module imports its runtime from a directory of declaration files
 (`src/emit/runtime.ts` `writeRuntime`: `rt.d.ts`, `chacha.d.ts`,

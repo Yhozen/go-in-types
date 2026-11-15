@@ -1,7 +1,7 @@
 // Native parity of the tsgo overlay: builds cmd/tsgo with overlay/tsgo.json
 // and runs it on the 328 oracle inputs x {mini, es5}, comparing stdout and
 // exit status with the unmodified native tsc 7.0.2 (node_modules/.bin/tsc).
-//   node scripts/tsgo-parity.ts [--oracle DIR] [--warm] [filter...]
+//   node scripts/tsgo-parity.ts [--oracle DIR] [--warm] [--jobs N] [filter...]
 // --warm: the overlay binary boots on the one-liner and checks each input
 // with checkWarm (the boot image's path: command line and lib reused).
 // The reference outputs are cached in .run/tsgo-parity/ref (the native
@@ -29,7 +29,11 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
 const oi = argv.indexOf("--oracle");
 const oracle = oi >= 0 ? argv[oi + 1]! : resolve(repo, "../../ts-in-lua-in-types");
-const filters = argv.filter((a, i) => !a.startsWith("--") && argv[i - 1] !== "--oracle");
+const ji = argv.indexOf("--jobs");
+const jobCount = ji >= 0 ? Number(argv[ji + 1]) : Math.max(2, cpus().length - 2);
+const filters = argv.filter(
+  (a, i) => !a.startsWith("--") && argv[i - 1] !== "--oracle" && argv[i - 1] !== "--jobs",
+);
 const work = join(repo, ".run/tsgo-parity");
 const libs: Record<string, string> = {
   mini: join(oracle, "lua/lib.mini.d.ts"),
@@ -116,7 +120,7 @@ async function main() {
   const jobs = inputs().flatMap((f) => Object.keys(libs).map((m) => [f, m] as const));
   let ok = 0;
   const bad: string[] = [];
-  await pool(jobs, Math.max(2, cpus().length - 2), async ([f, mode]) => {
+  await pool(jobs, jobCount, async ([f, mode]) => {
     // Outside the repository: tsc looks for a tsconfig.json in parent directories.
     const d = join(tmpdir(), "tsgo-parity", `${f.replaceAll("/", "__")}.${mode}`);
     rmSync(d, { recursive: true, force: true });

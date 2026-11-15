@@ -733,8 +733,58 @@ export interface TypesState {
   frames: (string | { tv: TV } | undefined)[][];
 }
 
+/**
+ * Whether snapshot value v has the shape of type t's kind (shallow). A heap
+ * slot can hold a value of another type than the one its referrers give it
+ * (the std overlays' reflect type descriptors); `snapshotToTypes` with
+ * `lenient` encodes such slots as dead.
+ */
+export function fitsKind(ti: TypeInfo, v: any, t: number): boolean {
+  if (v !== null && typeof v === "object" && "u" in v) return true;
+  const o = v !== null && typeof v === "object";
+  switch (ti.kind(t)) {
+    case "bool":
+      return typeof v === "boolean";
+    case "int":
+    case "float":
+      return typeof v === "number" || typeof v === "string" || (o && "n" in v);
+    case "string":
+      return typeof v === "string";
+    case "pointer":
+    case "opaque":
+      return v === null || typeof v === "number" || (o && ("p" in v || "mi" in v || "si" in v));
+    case "slice":
+      return v === null || (o && "s" in v);
+    case "iface":
+      return v === null || (o && "t" in v);
+    case "func":
+      return v === null || (o && "f" in v);
+    case "map":
+      return v === null || (o && "m" in v);
+    case "chan":
+      return v === null; // no channel codec
+    case "agg":
+      return Array.isArray(v);
+  }
+}
+
+export interface SnapshotToTypesOptions {
+  /**
+   * Encode slots whose value does not fit the slot's type (`fitsKind`), and
+   * channel objects, as dead (`["?", json]`, never read by a correct run)
+   * instead of failing; each is listed in `dead`.
+   */
+  lenient?: boolean;
+  dead?: string[];
+}
+
 /** A reference snapshot's objects and frame registers in type-level form. */
-export function snapshotToTypes(prog: Program, snap: any, imp: string): TypesState {
+export function snapshotToTypes(
+  prog: Program,
+  snap: any,
+  imp: string,
+  opts: SnapshotToTypesOptions = {},
+): TypesState {
   const ti = new TypeInfo(prog);
   const maps = new Map<number, number>();
   const types = typeSnapshot(ti, snap, maps);
@@ -744,11 +794,20 @@ export function snapshotToTypes(prog: Program, snap: any, imp: string): TypesSta
       if (!h.encObject) throw new Error("codec-heap: map hook without encObject");
       return h.encObject(o, k, ti);
     }
-    if (o.k !== "o") throw new Error(`codec-heap: object ${k} is a channel (no codec)`);
+    if (o.k !== "o") {
+      if (!opts.lenient) throw new Error(`codec-heap: object ${k} is a channel (no codec)`);
+      opts.dead?.push(`object ${k}: a channel`);
+      return { slots: [], lazy: false };
+    }
     const st = types.get(k);
     const slots = (o.s as any[]).map((v, i) => {
       const t = st?.get(i);
-      return t === undefined ? deadSlot(v) : encSnapValue(ti, v, t);
+      if (t === undefined) return deadSlot(v);
+      if (opts.lenient && !fitsKind(ti, v, t)) {
+        opts.dead?.push(`object ${k} slot ${i}: ${JSON.stringify(v).slice(0, 80)} as type ${t}`);
+        return deadSlot(v);
+      }
+      return encSnapValue(ti, v, t);
     });
     const lazy = slots.length > 16;
     return { slots, lazy, zero: lazy ? ["undefined"] : undefined };

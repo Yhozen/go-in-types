@@ -57,8 +57,10 @@ Mode]` (`rt.ts` `Ct<…>`):
 
 - `Kind`: `"n"` (a call site waiting for its callee's result), `"d"` (a
   frame running its deferred calls), `"m"` (after init: call main), `"b"`
-  (the bottom: a return here ends the run with exit 0), `"q"` (printing a
-  fatal panic: waiting for an `Error()`/`String()` result).
+  (the bottom: a return here ends the run with exit 0), `"e"` (the bottom
+  of an entry call, `callState` in codec-state.ts: the returned int is the
+  exit status), `"q"` (printing a fatal panic: waiting for an
+  `Error()`/`String()` result).
 - `Key`: the entry that resumes the frame (`"n"`: the call's return point;
   `"d"` in run mode: the point after `runDefers`).
 - `Regs`: the frame's saved registers (a tuple; the entry knows the
@@ -213,3 +215,7 @@ moves, `A` holding the live values); the default jumps on.
 - deferstack values are stack indices (ints); the codec's init-time stack
   is `[m, [b, null]]` as in `GS0`.
 - Map keys: floats and interfaces (above).
+- Continuation kind `"e"`: the bottom of an entry call started by
+  codec-state's `callState` (a snapshot with an empty stack plus a call of
+  an entry such as tsgo's `checkWarm`); returning an int there ends the
+  run with that exit status, as the reference's `callEntry`.

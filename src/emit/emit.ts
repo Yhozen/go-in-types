@@ -2019,6 +2019,22 @@ class SegB {
       }
       case "internal/abi.NoEscape":
         return a(0);
+      case "slices.overlaps": {
+        // overlaps[E](a, b []E): both non-empty in the same object, and their
+        // slot ranges intersect (src/ref/intrinsics.ts)
+        const st = e.prog.types[(e.prog.types[g.sig] as any).params[0]] as any;
+        const es = Math.max(1, e.slots(st.elem));
+        return `R.SliceOverlaps<${a(0)}, ${a(1)}, ${strLit(encNat(es))}>`;
+      }
+      case "maps.clone": {
+        // clone(m any) any: a new map with m's entries (renumbered), the same
+        // dynamic type; nil interface or nil map: the argument itself
+        const x = a(0);
+        const h = H();
+        const v = this.bind(`R.MapCloneV<${h}, ${x}>`);
+        this.heapWrite((h) => `R.MapCloneH<${h}, ${x}>`);
+        return v;
+      }
       case "gointypes/rt.Write": {
         const fd = a(0);
         const s = this.bind(`Sr.BytesToStr<${H()}, ${a(1)}>`);

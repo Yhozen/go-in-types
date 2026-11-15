@@ -145,26 +145,28 @@ type RetC<P extends ProgB, H, C, K, X, F, V> =
       ? RunD<P, H, Cons<C, K>, X, F>
       : I0<C> extends "b"
         ? Ex<H, K, X, 0>
-        : I0<C> extends "m"
-          ? Ent<
-              P["e"],
-              `f${I4<C> & string}`,
-              H,
-              Cons<Ct<"b", "", [], null, "0", "">, K>,
-              X,
-              F,
-              Mk3<I4<C>, [], []>
-            >
-          : I0<C> extends "q"
-            ? FatalI<
-                P,
+        : I0<C> extends "e"
+          ? ExitC<H, K, X, V>
+          : I0<C> extends "m"
+            ? Ent<
+                P["e"],
+                `f${I4<C> & string}`,
                 H,
-                K,
-                XPn<X, PnSet<I2<X>, I4<PnNth<I2<X>, I5<C>>>, "5", V>>,
+                Cons<Ct<"b", "", [], null, "0", "">, K>,
+                X,
                 F,
-                `${I5<C> & string}x`
+                Mk3<I4<C>, [], []>
               >
-            : St<"x", "", H, K, XErr<X, "fatal error: bad continuation\n">, 2, "">;
+            : I0<C> extends "q"
+              ? FatalI<
+                  P,
+                  H,
+                  K,
+                  XPn<X, PnSet<I2<X>, I4<PnNth<I2<X>, I5<C>>>, "5", V>>,
+                  F,
+                  `${I5<C> & string}x`
+                >
+              : St<"x", "", H, K, XErr<X, "fatal error: bad continuation\n">, 2, "">;
 
 // ---------------------------------------------------------------- panics and defers
 //
@@ -538,6 +540,40 @@ type NumOf<S> = S extends `${infer N extends number}` ? N : 2;
 /** An unsupported operation reached: message to stderr, exit 2. */
 export type Trap<H, K, X, Msg> = Ex<H, K, XErr<X, Msg>, 2>;
 
+/**
+ * `slices.overlaps(a, b)` (src/ref/intrinsics.ts): a and b non-empty in the
+ * same object and their slot ranges [off, off + len * Es) intersect.
+ */
+export type SliceOverlaps<A, B, Es extends string> = A extends null
+  ? false
+  : B extends null
+    ? false
+    : I2<A> extends "0"
+      ? false
+      : I2<B> extends "0"
+        ? false
+        : [I0<A>] extends [I0<B>]
+          ? I.Lt<
+              "i64",
+              I1<A> & string,
+              I.Add<"i64", I1<B> & string, I.Mul<"i64", I2<B> & string, Es>>
+            > extends true
+            ? I.Lt<
+                "i64",
+                I1<B> & string,
+                I.Add<"i64", I1<A> & string, I.Mul<"i64", I2<A> & string, Es>>
+              >
+            : false
+          : false;
+/** `maps.clone(x)` on interface X = [T, M]: the clone's value (read from the heap before MapCloneH). */
+export type MapCloneV<H, X> = X extends null
+  ? null
+  : I1<X> extends null
+    ? X
+    : Mk2<I0<X>, Hp.NextId<H>>;
+/** The heap after `maps.clone(x)`. */
+export type MapCloneH<H, X> = X extends null ? H : I1<X> extends null ? H : Mp.MapClone<H, I1<X>>;
+
 // ---------------------------------------------------------------- hovers
 
 /** Chunks per inner loop of Exec (a tail chain). */
@@ -563,6 +599,7 @@ type ExecI<P extends ProgB, S, K extends string, C extends string> =
         : S;
 
 import type * as Hp from "../types/heap.ts";
+import type * as Mp from "../types/map.ts";
 import type * as I from "../types/int.ts";
 import type * as N from "../types/nat.ts";
 import type * as Sr from "../types/str.ts";

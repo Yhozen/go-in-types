@@ -12,7 +12,7 @@ import {
   intToType,
   parseIntLiteral,
 } from "../../src/types/codec.ts";
-import { tablesSource } from "../../scripts/gen-int-tables.ts";
+import { pairsSource, tablesSource } from "../../scripts/gen-int-tables.ts";
 import { edges, randomValue, rng, testFiles } from "../../scripts/gen-int-tests.ts";
 import { KINDS, refBinop, refConv, refUnop } from "../../scripts/int-ref.ts";
 
@@ -121,6 +121,7 @@ test("the reference wrapper agrees with a bigint oracle", () => {
 
 test("generated tables and tests are up to date", () => {
   expect(readFileSync(resolve(ROOT, "src/types/int-tables.gen.ts"), "utf8")).toBe(tablesSource());
+  expect(readFileSync(resolve(ROOT, "src/types/int-pairs.gen.ts"), "utf8")).toBe(pairsSource());
   for (const [path, src] of testFiles())
     expect(readFileSync(resolve(ROOT, path), "utf8"), path).toBe(src);
 });

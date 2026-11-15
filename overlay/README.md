@@ -25,6 +25,15 @@ panic (dropping `encoding/json/v2`; `tsgo-parity.ts` proves no oracle check
 uses them), and `internal/tsoptions` computes `optionsType` on use and tests
 `*OrderedMap` with a type assertion.
 
+Boot image entries (ts-in-types stage 3): besides `check`, the harness has
+`boot(files, args)` (one full check that keeps the parsed command line and
+every parsed and bound source file but `/p/main.ts`) and `checkWarm(main)`
+(a check of a new `/p/main.ts` reusing both through a compiler host that
+returns the kept `SourceFile`s, as the watch host does). A host snapshots
+the machine after `boot` and calls `checkWarm` from the snapshot
+(`Machine.callEntry`). Natively, `GOINTYPES_WARM=<file>` makes the overlay
+binary boot on `<file>` and `checkWarm` the real `main.ts`.
+
 Files that must disappear map to the package's `empty.go` (go/packages'
 in-memory overlays cannot delete). Configs: `tests` = `std/`; `tsgo` =
 `std/` + `tsgo/` + `tsgo-std/` + `xxh3/`.
@@ -38,7 +47,8 @@ Build tags: native `-tags purego`; the front end `-tags purego,gointypes`
 
 - `node scripts/tsgo-parity.ts`: tsgo built with `tsgo.json` vs the
   unmodified native `tsc` 7.0.2 on the 328 oracle inputs x {mini, es5}
-  (stdout + exit status).
+  (stdout + exit status). `--warm`: the same through `boot` (on the
+  one-liner) and `checkWarm`.
 - `node scripts/tsgo-reflect.ts`: coverage build; lists reflect /
   reflectlite / json / binary / regexp code that ran inside `check`
   (counters at check start subtracted), with `internal/scanner` as a

@@ -1,7 +1,9 @@
 // Native parity of the tsgo overlay: builds cmd/tsgo with overlay/tsgo.json
 // and runs it on the 328 oracle inputs x {mini, es5}, comparing stdout and
 // exit status with the unmodified native tsc 7.0.2 (node_modules/.bin/tsc).
-//   node scripts/tsgo-parity.ts [--oracle DIR] [filter...]
+//   node scripts/tsgo-parity.ts [--oracle DIR] [--warm] [filter...]
+// --warm: the overlay binary boots on the one-liner and checks each input
+// with checkWarm (the boot image's path: command line and lib reused).
 // The reference outputs are cached in .run/tsgo-parity/ref (the native
 // binary does not change).
 import { execFile, execFileSync } from "node:child_process";
@@ -51,7 +53,15 @@ function inputs(): string[] {
   return out.filter((f) => filters.length === 0 || filters.some((x) => f.includes(x)));
 }
 
-async function check(bin: string[], dir: string, lib: string): Promise<string> {
+const warm = argv.includes("--warm");
+const warmFile = join(work, "warmup.ts");
+
+async function check(
+  bin: string[],
+  dir: string,
+  lib: string,
+  env?: NodeJS.ProcessEnv,
+): Promise<string> {
   try {
     const r = await run(
       bin[0]!,
@@ -69,6 +79,7 @@ async function check(bin: string[], dir: string, lib: string): Promise<string> {
         encoding: "latin1",
         timeout: 120_000,
         maxBuffer: 64 << 20,
+        env,
       },
     );
     return r.stdout + r.stderr + "\n[exit 0]\n";
@@ -82,6 +93,7 @@ async function main() {
   const tsgo = tsgoDir();
   const bin = join(work, "tsgo-overlay");
   mkdirSync(work, { recursive: true });
+  writeFileSync(warmFile, "const x: number = 'hello';\n");
   execFileSync(
     "go",
     [
@@ -120,7 +132,12 @@ async function main() {
       mkdirSync(dirname(cache), { recursive: true });
       writeFileSync(cache, want, "latin1");
     }
-    const got = await check([bin], d, lib);
+    const got = await check(
+      [bin],
+      d,
+      lib,
+      warm ? { ...process.env, GOINTYPES_WARM: warmFile } : undefined,
+    );
     if (got === want) ok++;
     else {
       bad.push(`${f} ${mode}`);
@@ -129,7 +146,7 @@ async function main() {
     }
   });
   for (const b of bad.sort()) console.log("DIFF", b);
-  console.log(`tsgo overlay native parity: ${ok}/${jobs.length}`);
+  console.log(`tsgo overlay native parity${warm ? " (warm)" : ""}: ${ok}/${jobs.length}`);
   process.exitCode = bad.length === 0 ? 0 : 1;
 }
 

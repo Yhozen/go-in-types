@@ -131,7 +131,6 @@ const PTR: Record<number, number> = {
   [T_U8]: T_PU8,
 };
 const SLICE_ELEM: Record<number, number> = { [T_SINT]: T_INT, [T_SS]: T_S, [T_SU8]: T_U8 };
-const SLICE_OF: Record<number, number> = { [T_INT]: T_SINT, [T_S]: T_SS, [T_U8]: T_SU8 };
 
 // ---------------------------------------------------------------- generator
 

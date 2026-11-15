@@ -8,6 +8,16 @@
 // docs/stage0/HEAP.md); `names` says what they are called where the text is
 // used (map.ts exports them as MapMk6, MapMk5 and MapMk16).
 import { GoMap } from "../ref/gomap.ts";
+import {
+  codecHooks,
+  decNat,
+  Dec,
+  encNat,
+  encSnapValue,
+  ID_WIDTH,
+  idOf,
+  TypeInfo,
+} from "./codec-heap.ts";
 import { encodeInt64 } from "./codec-int.ts";
 import { strToType } from "./codec-str.ts";
 import { strHash } from "./hash-spec.ts";
@@ -243,3 +253,91 @@ export function mapStateFromType(
   m.nextSeq = num(ms[1]!);
   return m;
 }
+
+// ---------------------------------------------------------------- maps on the heap
+
+/**
+ * Canonical key C (map.ts) of a snapshot-format key value of type t: strings,
+ * integers (their type-level int) and bools as map.ts's Key*; pointers
+ * `${id}.${slot}` or "nil"; structs and arrays slot by slot, each string
+ * slot as `${Len}:${S}` (KeyStr) and every other slot as its form followed
+ * by ",". Float and interface keys trap at the type level (DESIGN.md).
+ */
+export function snapKeyCanon(ti: TypeInfo, k: any, t: number): string {
+  const one = (v: any, s: number): string => {
+    switch (ti.kind(s)) {
+      case "string":
+        return v as string;
+      case "int":
+        return encNat(BigInt.asIntN(ti.width(s), typeof v === "object" ? BigInt(v.n) : BigInt(v)));
+      case "bool":
+        return canonKey.bool(v as boolean);
+      case "pointer":
+      case "chan":
+        return v === null ? "nil" : `${v.p < 0 ? "0".repeat(ID_WIDTH) : idOf(v.p)}.${encNat(v.i)}`;
+      default:
+        throw new Error(`codec-map: ${ti.T.name(s)} keys are not supported at the type level`);
+    }
+  };
+  if (ti.kind(t) !== "agg") return one(k, t);
+  const st = ti.slotTypes(t);
+  let c = "";
+  st.forEach((s, i) => {
+    c += ti.kind(s) === "string" ? canonKey.strField(k[i] as string) : one(k[i], s) + ",";
+  });
+  return c;
+}
+
+/** map.ts Mode of a map type: "i" for integer keys. */
+export function mapMode(ti: TypeInfo, t: number): "i" | "s" {
+  return ti.kind(ti.mapTypes(t)[0]) === "int" ? "i" : "s";
+}
+
+/** Key and value codecs of a map type for snapshot-format values. */
+export function snapMapCodecs(ti: TypeInfo, t: number): [MapKeyCodec, MapValCodec] {
+  const [kt, vt] = ti.mapTypes(t);
+  return [
+    {
+      mode: mapMode(ti, t),
+      canon: (k) => snapKeyCanon(ti, k, kt),
+      keyText: (k) => encSnapValue(ti, k, kt),
+      keyFrom: (x) => x,
+    },
+    { valText: (v) => encSnapValue(ti, v, vt), valFrom: (x) => x },
+  ];
+}
+
+/** Text of a snapshot map object `{ k: "m", t, e: [[k, v, seq]...], n }`. */
+export function snapMapToType(ti: TypeInfo, o: any, names: CtorNames = NAMES): string {
+  const [kc, vc] = snapMapCodecs(ti, o.t);
+  const m = new GoMap(o.t, (k) => kc.canon(k));
+  for (const [k, v, seq] of o.e) m.restore(k, v, seq);
+  m.nextSeq = o.n;
+  return mapStateToType(m, kc, vc, names);
+}
+
+/** A snapshot map object from an evaluated map state (codec-heap's evalType form). */
+export function snapMapFromState(ms: any[], t: number, d: Dec): any {
+  const [kt, vt] = d.ti.mapTypes(t);
+  const e: [any, any, number][] = [];
+  const walk = (node: any, depth: number) => {
+    if (node === undefined) return;
+    if (depth === 0) {
+      for (let x = node; x !== undefined; x = x[4])
+        e.push([d.value(x[1], kt), d.value(x[2], vt), Number(decNat(x[3]))]);
+      return;
+    }
+    for (const c of node as any[]) walk(c, depth - 1);
+  };
+  walk(ms[3], 4);
+  e.sort((a, b) => a[2] - b[2]);
+  return { k: "m", t, e, n: Number(decNat(ms[1])) };
+}
+
+codecHooks.map = {
+  enc: (v, _t, e) => strToType(e.id(v as object)),
+  encSnap: (v) => strToType(v.m < 0 ? "0".repeat(ID_WIDTH) : idOf(v.m)),
+  dec: (v, _t, d) => ({ m: d.obj(v as string) }),
+  encObject: (o, _k, ti) => ({ slots: [], lazy: false, text: snapMapToType(ti, o) }),
+  decObject: (o, t, d) => snapMapFromState(o, t, d),
+};

@@ -14,7 +14,9 @@
     "gen:go-out": "node scripts/gen-go-out.ts",
     "gate:ref": "node scripts/gate-ref.ts",
     "gen:strmap": "node scripts/gen-strmap.ts",
-    "gen:int": "node scripts/gen-int-tables.ts && node scripts/gen-int-tests.ts"
+    "gen:int": "node scripts/gen-int-tables.ts && node scripts/gen-int-tests.ts",
+    "gate:types": "node scripts/gate-types.ts",
+    "types-run": "node scripts/types-run.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

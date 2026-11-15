@@ -81,9 +81,27 @@ export interface ValueHook {
   dec?: (v: any, t: number, d: Dec) => any;
   /** a snapshot object of this kind ({ k: "m" } / { k: "c" }) -> heap object text */
   encObject?: (o: any, k: number, ti: TypeInfo) => ObjText;
+  /** an evaluated heap object of this kind and its type -> snapshot object */
+  decObject?: (o: any, t: number, d: Dec) => any;
 }
-/** Hooks for maps and channels; the str/map codec fills `map`. */
+/** Hooks for maps and channels; codec-map fills `map`. */
 export const codecHooks: { map?: ValueHook; chan?: ValueHook } = {};
+
+/**
+ * Range iterators (docs/EMIT.md "Registers"): a map iterator { mi, q } (q:
+ * the seq of the last entry visited) is `[M, It]` with It = q + 1 (the next
+ * Seq to look at, map.ts); a string iterator { si, q } is `[S, Pos]`.
+ */
+export function encIter(v: any): string {
+  if ("mi" in v) return `[${v.mi === null ? "null" : lit(snapId(v.mi))}, ${lit(encNat(v.q + 1))}]`;
+  return `[${lit(v.si)}, ${lit(encNat(v.q))}]`;
+}
+/** An evaluated iterator back to snapshot form; `src` is the ranged operand's type. */
+export function decIter(ti: TypeInfo, v: any, src: number): any {
+  if (ti.kind(src) === "map")
+    return { mi: v[0] === null ? null : idNum(v[0]), q: Number(decNat(v[1])) - 1 };
+  return { si: v[0], q: Number(decNat(v[1])) };
+}
 function hook(kind: "map" | "chan"): ValueHook {
   const h = codecHooks[kind];
   if (!h) throw new Error(`codec-heap: no codec for ${kind} values (codecHooks.${kind})`);
@@ -139,6 +157,32 @@ export class TypeInfo {
   /** Element type of a slice / pointer type. */
   elem(t: number): number {
     return (this.T.info[t]!.u as any).elem as number;
+  }
+  /** Is t the opaque type of `range` iterators (go/ssa's rangeIter)? */
+  isIter(t: number): boolean {
+    const x = this.prog.types[t] as any;
+    return x.k === "named" && x.name === "ssa.rangeIter";
+  }
+  private iters = new Map<number, Map<number, number>>();
+  /** Registers of function fn that hold `range` iterators -> the ranged operand's type. */
+  iterSources(fn: number): Map<number, number> {
+    let m = this.iters.get(fn);
+    if (m) return m;
+    m = new Map();
+    const f = this.prog.funcs[fn]!;
+    for (const b of f.blocks ?? [])
+      for (const ins of b.instrs)
+        if (ins.op === "range") {
+          const x = ins.x as any;
+          m.set(ins.dst, "r" in x ? f.regTypes[x.r]! : x.t);
+        }
+    this.iters.set(fn, m);
+    return m;
+  }
+  /** Key and element types of a map type. */
+  mapTypes(t: number): [number, number] {
+    const u = this.T.info[t]!.u as any;
+    return [u.key as number, u.elem as number];
   }
   /** Free-variable types of a closure function. */
   envTypes(fn: number): number[] {
@@ -230,6 +274,8 @@ export class Enc {
 export interface ObjText {
   /** slot texts (type literal); `undefined` slots are absent */
   slots: (string | undefined)[];
+  /** the whole object's text instead of slots (a map state, src/types/map.ts) */
+  text?: string;
   /** lazy: zero pattern texts */
   zero?: string[];
   lazy: boolean;
@@ -250,10 +296,18 @@ export function lazyDepth(n: number): number {
 export function encodeHeap(objs: ObjText[], imp: string, name = "Heap"): string {
   const out: string[] = [];
   out.push(`import type { E0, E1, E2, E3, E4, E5, E6, Mk16, Mk19 } from "${imp}";`);
+  if (objs.some((o) => o.text !== undefined))
+    out.push(
+      `import type { MapMk5, MapMk6, MapMk16 } from "${imp.replace(/heap\.gen(\.d)?\.ts$/, "map$1.ts")}";`,
+    );
   out.push(`type Z_ = Mk16<${Array(16).fill("E0").join(", ")}>;`);
   const leafName = (k: number) => `O_${idOf(k)}`;
   objs.forEach((o, k) => {
     const nm = leafName(k);
+    if (o.text !== undefined) {
+      out.push(`type ${nm} = ${o.text};`);
+      return;
+    }
     if (!o.lazy) {
       if (o.slots.length > 16) throw new Error("flat object over 16 slots");
       const s = o.slots.map((x) => x ?? "undefined");
@@ -348,6 +402,11 @@ class Parser {
         if (d !== ",") throw new Error("parse: expected , or ] at " + this.i);
       }
     }
+    const num = /^-?\d+/.exec(this.s.slice(this.i, this.i + 30))?.[0];
+    if (num) {
+      this.i += num.length;
+      return Number(num) as unknown as TV;
+    }
     const id = /^[A-Za-z_$][\w$.]*/.exec(this.s.slice(this.i, this.i + 200))?.[0];
     if (!id) throw new Error("parse: unexpected " + this.s.slice(this.i, this.i + 20));
     this.i += id.length;
@@ -413,7 +472,12 @@ export function evalType(t: TV, decls: Map<string, TV>, memo = new Map<string, a
     ref === "Mk19" ||
     ref === "HeapMk" ||
     ref.endsWith("Mk2") ||
-    ref.endsWith("Mk4")
+    ref.endsWith("Mk4") ||
+    ref.endsWith("Mk5") ||
+    ref.endsWith("Mk6") ||
+    ref.endsWith("Mk16") ||
+    // the emitted runtime's constructors (src/emit/rt.ts St, Ct, Cons, Xt)
+    /^R\.(St|Ct|Cons|Xt)$/.test(ref)
   )
     return a;
   throw new Error("evalType: unknown constructor " + ref);
@@ -484,6 +548,7 @@ export class Dec {
         return v;
       case "pointer":
       case "opaque":
+        if (ti.isIter(t)) throw new Error("codec-heap: decode iterators with decIter");
         return v === null ? null : { p: this.obj(v[0]), i: Number(decNat(v[1])) };
       case "slice":
         return v === null
@@ -528,7 +593,11 @@ export class Dec {
  * type id. Pointers type the pointee's slots, slices the elements up to cap,
  * interfaces their payload, funcs their environment.
  */
-export function typeSnapshot(ti: TypeInfo, snap: any): Map<number, Map<number, number>> {
+export function typeSnapshot(
+  ti: TypeInfo,
+  snap: any,
+  maps = new Map<number, number>(),
+): Map<number, Map<number, number>> {
   const types = new Map<number, Map<number, number>>();
   const work: [any, number][] = [];
   const setSlot = (o: number, i: number, t: number) => {
@@ -566,6 +635,16 @@ export function typeSnapshot(ti: TypeInfo, snap: any): Map<number, Map<number, n
         (v.e as any[]).forEach((x, i) => visit(x, et[i]!));
         return;
       }
+      case "map": {
+        const o = v.m as number;
+        if (maps.has(o)) return;
+        maps.set(o, t);
+        const so = snap.objects[o];
+        if (so?.k !== "m") return;
+        const [kt, vt] = ti.mapTypes(t);
+        for (const [k, x] of so.e) work.push([k, kt], [x, vt]);
+        return;
+      }
       case "agg": {
         const info = ti.T.info[t]!;
         const st = info.k === "tuple" ? ((info.u as any).elems as number[]) : ti.slotTypes(t);
@@ -578,7 +657,13 @@ export function typeSnapshot(ti: TypeInfo, snap: any): Map<number, Map<number, n
   snap.globals.forEach((g: number, k: number) => region(g, 0, prog.globals[k]!.type));
   for (const fr of snap.frames) {
     const rt = prog.funcs[fr.fn]!.regTypes;
-    fr.r.forEach((v: any, i: number) => visit(v, rt[i]!));
+    const its = ti.iterSources(fr.fn);
+    fr.r.forEach((v: any, i: number) => {
+      // a map iterator { mi, q } holds its map (type: the range operand's)
+      if (v && typeof v === "object" && "mi" in v) {
+        if (v.mi !== null) visit({ m: v.mi }, its.get(i)!);
+      } else visit(v, rt[i]!);
+    });
     for (const d of fr.df ?? []) {
       const sig = prog.types[prog.funcs[d.fn]!.sig] as any;
       (d.a as any[]).forEach((x, i) => visit(x, sig.params[i]));
@@ -609,6 +694,9 @@ export function encSnapValue(ti: TypeInfo, v: any, t: number): string {
       return lit(v);
     case "pointer":
     case "opaque":
+      // a deferstack value (DESIGN.md: the frame's stack index) is a number
+      if (typeof v === "number") return lit(encNat(v));
+      if (v !== null && ("mi" in v || "si" in v)) return encIter(v);
       return v === null ? "null" : `[${lit(snapId(v.p))}, ${lit(encNat(v.i))}]`;
     case "slice":
       return v === null
@@ -641,17 +729,22 @@ const deadSlot = (v: any) => `["?", ${lit(JSON.stringify(v))}]`;
 export interface TypesState {
   /** the heap module (declares `Heap`) */
   heap: string;
-  /** per frame: register texts (type literals) */
-  frames: string[][];
+  /** per frame: register texts (type literals) or parsed types (`{ tv }`); `undefined`: not kept */
+  frames: (string | { tv: TV } | undefined)[][];
 }
 
 /** A reference snapshot's objects and frame registers in type-level form. */
 export function snapshotToTypes(prog: Program, snap: any, imp: string): TypesState {
   const ti = new TypeInfo(prog);
-  const types = typeSnapshot(ti, snap);
+  const maps = new Map<number, number>();
+  const types = typeSnapshot(ti, snap, maps);
   const objs: ObjText[] = snap.objects.map((o: any, k: number) => {
-    if (o.k !== "o")
-      throw new Error(`codec-heap: object ${k} is a ${o.k === "m" ? "map" : "chan"} (own codec)`);
+    if (o.k === "m") {
+      const h = hook("map");
+      if (!h.encObject) throw new Error("codec-heap: map hook without encObject");
+      return h.encObject(o, k, ti);
+    }
+    if (o.k !== "o") throw new Error(`codec-heap: object ${k} is a channel (no codec)`);
     const st = types.get(k);
     const slots = (o.s as any[]).map((v, i) => {
       const t = st?.get(i);
@@ -676,9 +769,14 @@ export function typesToSnapshot(prog: Program, st: TypesState, base: any): any {
   const dec = new Dec(ti);
   const frames = base.frames.map((fr: any, k: number) => {
     const rt = prog.funcs[fr.fn]!.regTypes;
+    const its = ti.iterSources(fr.fn);
     const regs = st.frames[k]!.map((txt, i) => {
-      const v = evalType(new Parser(txt, 0).expr(), decls);
-      return v === undefined ? { u: 1 } : dec.value(v, rt[i]!);
+      const v =
+        txt === undefined
+          ? undefined
+          : evalType(typeof txt === "string" ? new Parser(txt, 0).expr() : txt.tv, decls);
+      if (v === undefined) return { u: 1 };
+      return its.has(i) && ti.isIter(rt[i]!) ? decIter(ti, v, its.get(i)!) : dec.value(v, rt[i]!);
     });
     return { ...fr, r: regs };
   });
@@ -686,18 +784,45 @@ export function typesToSnapshot(prog: Program, st: TypesState, base: any): any {
   // decode objects: slot types from a traversal of the decoded roots
   const n = parseInt(h[0], 16) - 1;
   const raw: any[][] = [];
+  const isMap: boolean[] = [];
   for (let k = 0; k < n; k++) {
     const o = objs.get(idOf(k))!;
+    // a map state is a 6-tuple (map.ts Mk6); objects are 16- or 19-tuples
+    isMap.push(o.length === 6);
+    if (o.length === 6) {
+      raw.push(o);
+      continue;
+    }
     const size = objSize(o);
-    raw.push(Array.from({ length: size }, (_, s) => objSlot(o, s)));
+    // lazy objects: an unwritten slot reads as the zero pattern's slot
+    const z = o.length === 19 ? (o[18] as any[]) : [];
+    raw.push(
+      Array.from({ length: size }, (_, s) => {
+        const v = objSlot(o, s);
+        return v === undefined && z.length > 0 ? z[s % z.length] : v;
+      }),
+    );
   }
   // first pass: decode with types found so far, iterate to a fixpoint
-  const decoded: any[][] = raw.map((r) => r.map(() => null));
-  partial.objects = decoded.map((s) => ({ k: "o", s }));
+  const decoded: any[][] = raw.map((r, k) => (isMap[k] ? [] : r.map(() => null)));
+  partial.objects = decoded.map((s, k) =>
+    isMap[k] ? { k: "m", t: -1, e: [], n: 0 } : { k: "o", s },
+  );
   let types = new Map<number, Map<number, number>>();
+  const mapsDone = new Set<number>();
   for (;;) {
-    const t2 = typeSnapshot(ti, partial);
+    const maps = new Map<number, number>();
+    const t2 = typeSnapshot(ti, partial, maps);
     let grew = false;
+    for (const [o, t] of maps) {
+      if (mapsDone.has(o)) continue;
+      if (!isMap[o]) throw new Error(`codec-heap: object ${o} is typed as a map but is not one`);
+      const h = hook("map");
+      if (!h.decObject) throw new Error("codec-heap: map hook without decObject");
+      partial.objects[o] = h.decObject(raw[o], t, dec);
+      mapsDone.add(o);
+      grew = true;
+    }
     for (const [o, m] of t2)
       for (const [i, t] of m) {
         if (types.get(o)?.has(i)) continue;
@@ -708,12 +833,18 @@ export function typesToSnapshot(prog: Program, st: TypesState, base: any): any {
     types = t2;
     if (!grew) break;
   }
-  raw.forEach((r, o) =>
-    r.forEach((v, i) => {
-      if (types.get(o)?.has(i)) return;
-      decoded[o]![i] =
-        Array.isArray(v) && v[0] === "?" ? JSON.parse(v[1]) : v === undefined ? null : v;
-    }),
+  // a map no typed path reaches is garbage: its key and value types are unknown
+  isMap.forEach((m, o) => {
+    if (m && !mapsDone.has(o)) partial.objects[o] = { k: "o", s: [] };
+  });
+  raw.forEach(
+    (r, o) =>
+      isMap[o] ||
+      r.forEach((v, i) => {
+        if (types.get(o)?.has(i)) return;
+        decoded[o]![i] =
+          Array.isArray(v) && v[0] === "?" ? JSON.parse(v[1]) : v === undefined ? null : v;
+      }),
   );
   return partial;
 }
@@ -779,6 +910,8 @@ export function progTables(prog: Program, dyn: number[], ifaces: number[], name 
 /** The equality kind `Eq` takes for values of type t (text), or `"unc"`. */
 export function eqKind(ti: TypeInfo, t: number): string {
   const T = ti.T;
+  // an aggregate too big to hold in types is never compared there
+  if (T.info[t]!.slots > 1 << 16) return lit("unc");
   if (T.eq(t) === null) return lit("unc");
   const one = (s: number): string => {
     const k = T.info[s]!;

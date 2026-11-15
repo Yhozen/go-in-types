@@ -327,6 +327,12 @@ export function encodeRune(r: number): string {
   );
 }
 
+/** Go's string(x) for an integer x of any width (a bigint is a 64-bit value): U+FFFD unless x is a valid rune. */
+export function intString(x: number | bigint): string {
+  if (typeof x === "bigint") x = x >= 0n && x <= 0x10ffffn ? Number(x) : -1;
+  return encodeRune(x);
+}
+
 /** Decodes one rune at byte i of s like utf8.DecodeRuneInString: [rune, size]. */
 export function decodeRune(s: string, i: number): [number, number] {
   const n = s.length - i;

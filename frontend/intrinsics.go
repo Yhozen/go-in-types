@@ -87,7 +87,7 @@ var intrinsics = map[string]string{
 	"gointypes/rt.Exit":  "(code int): end the run with exit status code",
 
 	// Package initializers of replaced runtime packages (see runtimePkg).
-	"noop": "package initializer of a runtime package: no-op",
+	"noop": "package initializer of a runtime package or of gointypes/rt: no-op",
 }
 
 // callRewrites are call sites replaced by an instruction (the callee is not
@@ -98,6 +98,23 @@ var callRewrites = map[string]string{
 	"math.Float64frombits": "changeType",
 	"math.Float32bits":     "changeType",
 	"math.Float32frombits": "changeType",
+}
+
+// noopInitPkgs: packages whose initializer is "noop" although they are
+// compiled: gointypes/rt imports os only for its native bodies, which are
+// intrinsics here.
+var noopInitPkgs = map[string]bool{"gointypes/rt": true}
+
+// runtimeCompiled: runtime functions compiled from Go anyway. The
+// reference represents every runtime panic value (index out of range, nil
+// dereference, failed type assertion, ...) as a runtime.errorString holding
+// the message without the "runtime error: " prefix; the front end always
+// emits that type and its methods.
+var runtimeCompiled = map[string]bool{
+	"(runtime.errorString).Error":        true,
+	"(runtime.errorString).RuntimeError": true,
+	"(runtime.plainError).Error":         true,
+	"(runtime.plainError).RuntimeError":  true,
 }
 
 // runtimePkg: packages replaced by the engine runtime. Their functions are

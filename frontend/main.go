@@ -67,6 +67,7 @@ type frontend struct {
 	globList []Global
 	sf       *ssa.Package
 	keep     map[string]bool
+	sizes    types.Sizes
 	names    map[string]int
 
 	ifaceTypes typeutil.Map // dynamic types put in interfaces
@@ -227,6 +228,7 @@ func run(patterns []string) (*Program, *frontend) {
 
 	fe := &frontend{prog: sp, tt: &typeTable{}, funcIDs: map[*ssa.Function]int{}, globals: map[*ssa.Global]int{},
 		invoked: map[string]bool{}, names: map[string]int{}}
+	fe.sizes = types.SizesFor("gc", *flagGOARCH)
 	fe.sf = sp.ImportedPackage(softfloatPkg)
 	if fe.sf == nil {
 		log.Fatal("soft-float package not loaded")
@@ -268,7 +270,7 @@ func run(patterns []string) (*Program, *frontend) {
 	// Reachability: VTA over RTA's graph, then (while lowering) every
 	// function referenced by a reachable one (closures, func values, static
 	// callees) and the interface-dispatch methods.
-	reach := vtaReachable(roots)
+	reach := vtaReachable(roots, fe.compiled)
 	sorted := make([]*ssa.Function, 0, len(reach))
 	for f := range reach {
 		sorted = append(sorted, f)
@@ -291,6 +293,16 @@ func run(patterns []string) (*Program, *frontend) {
 
 	for _, f := range sorted {
 		fe.funcID(f)
+	}
+	// The runtime error type the reference uses for runtime panics.
+	if rp := sp.ImportedPackage("runtime"); rp != nil {
+		if tn, ok := rp.Pkg.Scope().Lookup("errorString").(*types.TypeName); ok {
+			fe.tt.id(tn.Type())
+			ms := sp.MethodSets.MethodSet(tn.Type())
+			for i := 0; i < ms.Len(); i++ {
+				fe.funcID(sp.MethodValue(ms.At(i)))
+			}
+		}
 	}
 	for {
 		for len(fe.queue) > 0 {
@@ -337,7 +349,7 @@ func funcLess(sp *ssa.Program, a, b *ssa.Function) bool {
 	return sp.Fset.Position(a.Pos()).String() < sp.Fset.Position(b.Pos()).String()
 }
 
-func vtaReachable(roots []*ssa.Function) map[*ssa.Function]bool {
+func vtaReachable(roots []*ssa.Function, expand func(*ssa.Function) bool) map[*ssa.Function]bool {
 	res := rta.Analyze(roots, true)
 	funcs := map[*ssa.Function]bool{}
 	for f := range res.Reachable {
@@ -356,7 +368,7 @@ func vtaReachable(roots []*ssa.Function) map[*ssa.Function]bool {
 		f := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		n := cg.Nodes[f]
-		if n == nil {
+		if n == nil || !expand(f) {
 			continue
 		}
 		for _, e := range n.Out {
@@ -488,11 +500,6 @@ func (fe *frontend) lowerFunc(f *ssa.Function) {
 	if p := fe.prog.Fset.Position(f.Pos()); p.IsValid() {
 		out.Pos = fmt.Sprintf("%s/%s:%d", pkgPathOf(f), filepath.Base(p.Filename), p.Line)
 	}
-	name := f.String()
-	if o := f.Origin(); o != nil {
-		name = o.String()
-	}
-	pkg := pkgPathOf(f)
 	stub := func(body, what string) {
 		out.Body = body
 		if body == "trap" {
@@ -519,24 +526,21 @@ func (fe *frontend) lowerFunc(f *ssa.Function) {
 		out.Regs = len(out.RegTypes)
 		out.Recover = -1
 	}
-	switch {
-	case intrinsics[name] != "":
-		stub("intrinsic", name)
-	case runtimePkg(pkg) && f.Synthetic == "package initializer":
-		stub("intrinsic", "noop")
-	case runtimePkg(pkg):
-		stub("trap", "runtime function "+name+" not supported")
-	case len(f.Blocks) == 0:
-		stub("trap", "function without body: "+name)
-		fe.bodyless = append(fe.bodyless, name)
-	case fe.keep != nil && !fe.keep[out.Name] && pkg != softfloatPkg && id != 0:
-		stub("trap", "pruned (-keep): "+name)
+	body, what := fe.bodyKind(f, out.Name)
+	switch body {
+	case "intrinsic":
+		stub("intrinsic", what)
+	case "trap":
+		stub("trap", what)
+		if len(f.Blocks) == 0 {
+			fe.bodyless = append(fe.bodyless, originName(f))
+		}
 	default:
 		out.Body = "ir"
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					log.Fatalf("lowering %s: %v", name, r)
+					log.Fatalf("lowering %s: %v", out.Name, r)
 				}
 			}()
 			fe.lowerBody(f, out)
@@ -580,4 +584,39 @@ func readKeep(path string) map[string]bool {
 		}
 	}
 	return m
+}
+
+// compiled reports whether f gets an IR body (its callees matter).
+func (fe *frontend) compiled(f *ssa.Function) bool {
+	body, _ := fe.bodyKind(f, fe.funcs0Name(f))
+	return body == "ir"
+}
+
+func (fe *frontend) funcs0Name(f *ssa.Function) string { return f.String() }
+
+func originName(f *ssa.Function) string {
+	if o := f.Origin(); o != nil {
+		return o.String()
+	}
+	return f.String()
+}
+
+// bodyKind decides how f is emitted: "ir", "intrinsic" (with its name) or
+// "trap" (with the message).
+func (fe *frontend) bodyKind(f *ssa.Function, emitted string) (string, string) {
+	name := originName(f)
+	pkg := pkgPathOf(f)
+	switch {
+	case intrinsics[name] != "":
+		return "intrinsic", name
+	case (runtimePkg(pkg) || noopInitPkgs[pkg]) && f.Synthetic == "package initializer":
+		return "intrinsic", "noop"
+	case runtimePkg(pkg) && !runtimeCompiled[name]:
+		return "trap", "runtime function " + name + " not supported"
+	case len(f.Blocks) == 0:
+		return "trap", "function without body: " + name
+	case fe.keep != nil && !fe.keep[emitted] && pkg != softfloatPkg:
+		return "trap", "pruned (-keep): " + name
+	}
+	return "ir", ""
 }

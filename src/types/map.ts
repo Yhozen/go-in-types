@@ -53,6 +53,28 @@ type Mk4<A, B, C, D> = A extends unknown ? [A, B, C, D] : never;
 type Mk5<A, B, C, D, E> = A extends unknown ? [A, B, C, D, E] : never;
 type Mk6<A, B, C, D, E, F> = A extends unknown ? [A, B, C, D, E, F] : never;
 
+/** Constructors for map states written as text (src/types/codec-map.ts). */
+export type MapMk6<A, B, C, D, E, F> = Mk6<A, B, C, D, E, F>;
+export type MapMk5<A, B, C, D, E> = Mk5<A, B, C, D, E>;
+export type MapMk16<A0, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15> = T.Mk16<
+  A0,
+  A1,
+  A2,
+  A3,
+  A4,
+  A5,
+  A6,
+  A7,
+  A8,
+  A9,
+  A10,
+  A11,
+  A12,
+  A13,
+  A14,
+  A15
+>;
+
 type F0<X> = X["0" & keyof X];
 type F1<X> = X["1" & keyof X];
 type F2<X> = X["2" & keyof X];

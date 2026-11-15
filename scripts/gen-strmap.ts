@@ -5,6 +5,7 @@
 import { writeFileSync } from "node:fs";
 import { GoMap, MapIter } from "../src/ref/gomap.ts";
 import { decodeRune, encodeRune } from "../src/ref/values.ts";
+import { mapStateToType } from "../src/types/codec-map.ts";
 import { strHash } from "../src/types/hash-spec.ts";
 import { strToType as lit } from "../src/types/codec-str.ts";
 import { encodeInt64 } from "../src/types/codec-int.ts";
@@ -483,6 +484,21 @@ function mapTests(): string {
       if (i % c.iterEvery === c.iterEvery - 1) iterAll();
     }
     iterAll();
+    // The codec prints the same state.
+    check(
+      S(st),
+      mapStateToType(
+        ref,
+        {
+          mode: c.mode,
+          canon: (k) => (isInt ? encInt(BigInt(k as string)) : (k as string)),
+          keyText: (k) => keyT(k as string),
+          keyFrom: () => null,
+        },
+        { valText: (v) => q(v as string), valFrom: () => null },
+        { mk6: "M.MapMk6", mk5: "M.MapMk5", mk16: "M.MapMk16" },
+      ),
+    );
     // A range loop that mutates the map between steps (Go allows both).
     if (c.ops < 200) {
       const it = new MapIter(ref);

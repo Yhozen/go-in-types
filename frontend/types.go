@@ -40,7 +40,7 @@ func methodKey(m *types.Func) string {
 
 // typeName prints a named type as Go's %T does (package name, not path).
 func typeName(t types.Type) string {
-	return types.TypeString(t, func(p *types.Package) string { return p.Name() })
+	return canon(t, func(p *types.Package) string { return p.Name() })
 }
 
 func (tt *typeTable) slotsOf(t types.Type) int {

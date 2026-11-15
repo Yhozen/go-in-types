@@ -223,7 +223,7 @@ func run(patterns []string) (*Program, *frontend) {
 	if packages.PrintErrors(initial) > 0 {
 		log.Fatal("package errors")
 	}
-	sp, pkgs := ssautil.AllPackages(initial, ssa.InstantiateGenerics)
+	sp, pkgs := ssautil.AllPackages(initial, ssa.InstantiateGenerics|ssa.BuildSerially)
 	sp.Build()
 
 	fe := &frontend{prog: sp, tt: &typeTable{}, funcIDs: map[*ssa.Function]int{}, globals: map[*ssa.Global]int{},
@@ -342,7 +342,7 @@ func run(patterns []string) (*Program, *frontend) {
 }
 
 func funcLess(sp *ssa.Program, a, b *ssa.Function) bool {
-	as, bs := a.String(), b.String()
+	as, bs := funcName(a), funcName(b)
 	if as != bs {
 		return as < bs
 	}
@@ -388,13 +388,18 @@ func (fe *frontend) funcID(f *ssa.Function) int {
 	if id, ok := fe.funcIDs[f]; ok {
 		return id
 	}
+	name := funcName(f)
+	if n, dup := fe.names[name]; dup {
+		// go/ssa may create several identical wrappers or thunks for one
+		// method (one per creating package); they share one function.
+		if f.Synthetic != "" && f.Parent() == nil && f.Synthetic != "package initializer" && fe.ssaFuncs[n] != nil && fe.ssaFuncs[n].Synthetic == f.Synthetic {
+			fe.funcIDs[f] = n
+			return n
+		}
+		name = fmt.Sprintf("%s#%d", name, len(fe.funcs))
+	}
 	id := len(fe.funcs)
 	fe.funcIDs[f] = id
-	name := f.String()
-	if n, dup := fe.names[name]; dup {
-		_ = n
-		name = fmt.Sprintf("%s#%d", name, id)
-	}
 	fe.names[name] = id
 	fe.funcs = append(fe.funcs, &Func{Name: name})
 	fe.ssaFuncs = append(fe.ssaFuncs, f)
@@ -592,7 +597,7 @@ func (fe *frontend) compiled(f *ssa.Function) bool {
 	return body == "ir"
 }
 
-func (fe *frontend) funcs0Name(f *ssa.Function) string { return f.String() }
+func (fe *frontend) funcs0Name(f *ssa.Function) string { return funcName(f) }
 
 func originName(f *ssa.Function) string {
 	if o := f.Origin(); o != nil {

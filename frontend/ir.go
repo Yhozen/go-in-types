@@ -9,7 +9,7 @@ import (
 	"strconv"
 )
 
-const irVersion = 1
+const irVersion = 2
 
 type Program struct {
 	Version int               `json:"version"`

@@ -10,7 +10,7 @@
  * Bump `IR_VERSION` on any incompatible change.
  */
 
-export const IR_VERSION = 1;
+export const IR_VERSION = 2;
 
 /** Index into `Program.types`. */
 export type TypeId = number;

@@ -135,6 +135,12 @@ Rules:
   b)` writes bytes to fd 1 or 2. The run's result is `{ stdout, stderr,
   exit, ops }`.
 
+## Contract changes
+
+- IR 2 (stage 2 close): `struct` types may carry `methods`/`ptrMethods`
+  (unnamed structs with embedded fields); builtin `deferstack`; `defer`
+  takes an optional `stack` operand (range-over-func bodies).
+
 ## Ops and snapshots
 
 - **One op = one executed IR instruction** (`phi` included, `trap` included).

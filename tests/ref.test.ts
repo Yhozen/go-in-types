@@ -243,7 +243,7 @@ function program(
     { k: "func", params: [], results: [1], variadic: false, slots: 1 }, // 7
   ];
   return {
-    version: 1,
+    version: 2,
     build: {},
     types,
     globals: [],

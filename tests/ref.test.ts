@@ -19,6 +19,7 @@ import {
   div64u,
   encodeRune,
   growCap,
+  intString,
   type Kind,
   mul64s,
   mul64u,
@@ -463,4 +464,15 @@ test("interface equality on uncomparable dynamic types panics", () => {
   p.types.push({ k: "slice", elem: 1, slots: 1 });
   const T = new Types(p);
   expect(() => T.ifaceEq({ t: 8, v: null } as any, { t: 8, v: null } as any)).toThrow();
+});
+
+test("string(x) of a 64-bit integer follows Go even for a bigint-held value", () => {
+  const conv = intString;
+  const bytes = (s: string) => [...s].map((c) => c.charCodeAt(0));
+  expect(bytes(conv(0x41))).toEqual([0x41]);
+  expect(bytes(conv(0x41n))).toEqual([0x41]);
+  expect(bytes(conv(0x4e16n))).toEqual([0xe4, 0xb8, 0x96]);
+  expect(bytes(conv(-1n))).toEqual([0xef, 0xbf, 0xbd]);
+  expect(bytes(conv(0x100000041n))).toEqual([0xef, 0xbf, 0xbd]);
+  expect(bytes(conv(-(1n << 63n)))).toEqual([0xef, 0xbf, 0xbd]);
 });

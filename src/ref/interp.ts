@@ -28,6 +28,7 @@ import {
   div64s,
   div64u,
   encodeRune,
+  intString,
   Exit,
   Func,
   GoPanic,
@@ -1217,7 +1218,7 @@ class Ctx {
     const fi = T.info[from]!;
     const ti = T.info[to]!;
     if (fi.ik && ti.ik) return convInt(fi.ik, ti.ik);
-    if (fi.ik && ti.k === "string") return (x) => encodeRune(typeof x === "bigint" ? -1 : x);
+    if (fi.ik && ti.k === "string") return intString;
     if (fi.k === "string" && ti.k === "slice") {
       const ek = T.info[(ti.u as any).elem]!.ik;
       if (ek === "uint8" || ek === "int8")

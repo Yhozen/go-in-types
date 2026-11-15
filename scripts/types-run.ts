@@ -37,6 +37,7 @@ import type { Program } from "../src/ir/types.ts";
 import { Machine } from "../src/ref/interp.ts";
 import { restore } from "../src/ref/snapshot.ts";
 import { strLit } from "../src/types/codec-heap.ts";
+import { startState } from "../src/types/codec-state.ts";
 import { firstDiff, formatOut } from "./go-out.ts";
 import { hover } from "./hover.ts";
 
@@ -406,9 +407,12 @@ export async function runTypes(o: TypesOptions): Promise<TypesResult> {
   let startOps = 0;
   if (o.from) {
     try {
-      const { startState } = await import("../src/types/codec-state.ts");
       const snap = typeof o.from === "string" ? JSON.parse(readFileSync(o.from, "utf8")) : o.from;
-      const st = startState(prog, snap, relImport(dir, "src/types"), relImport(dir, "src/emit"));
+      const st = startState(prog, snap, {
+        typesImp: relImport(dir, "src/types"),
+        rtImp: relImport(dir, "src/emit/rt.ts"),
+        emitted: readFileSync(join(dir, "prog.d.ts"), "utf8"),
+      });
       writeFileSync(join(dir, "start.d.ts"), st.module);
       startOps = st.ops;
     } catch (e: any) {

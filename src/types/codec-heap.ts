@@ -402,6 +402,11 @@ class Parser {
         if (d !== ",") throw new Error("parse: expected , or ] at " + this.i);
       }
     }
+    const num = /^-?\d+/.exec(this.s.slice(this.i, this.i + 30))?.[0];
+    if (num) {
+      this.i += num.length;
+      return Number(num) as unknown as TV;
+    }
     const id = /^[A-Za-z_$][\w$.]*/.exec(this.s.slice(this.i, this.i + 200))?.[0];
     if (!id) throw new Error("parse: unexpected " + this.s.slice(this.i, this.i + 20));
     this.i += id.length;
@@ -470,7 +475,9 @@ export function evalType(t: TV, decls: Map<string, TV>, memo = new Map<string, a
     ref.endsWith("Mk4") ||
     ref.endsWith("Mk5") ||
     ref.endsWith("Mk6") ||
-    ref.endsWith("Mk16")
+    ref.endsWith("Mk16") ||
+    // the emitted runtime's constructors (src/emit/rt.ts St, Ct, Cons, Xt)
+    /^R\.(St|Ct|Cons|Xt)$/.test(ref)
   )
     return a;
   throw new Error("evalType: unknown constructor " + ref);
@@ -720,8 +727,8 @@ const deadSlot = (v: any) => `["?", ${lit(JSON.stringify(v))}]`;
 export interface TypesState {
   /** the heap module (declares `Heap`) */
   heap: string;
-  /** per frame: register texts (type literals) */
-  frames: string[][];
+  /** per frame: register texts (type literals) or parsed types (`{ tv }`); `undefined`: not kept */
+  frames: (string | { tv: TV } | undefined)[][];
 }
 
 /** A reference snapshot's objects and frame registers in type-level form. */
@@ -762,7 +769,10 @@ export function typesToSnapshot(prog: Program, st: TypesState, base: any): any {
     const rt = prog.funcs[fr.fn]!.regTypes;
     const its = ti.iterSources(fr.fn);
     const regs = st.frames[k]!.map((txt, i) => {
-      const v = evalType(new Parser(txt, 0).expr(), decls);
+      const v =
+        txt === undefined
+          ? undefined
+          : evalType(typeof txt === "string" ? new Parser(txt, 0).expr() : txt.tv, decls);
       if (v === undefined) return { u: 1 };
       return its.has(i) && ti.isIter(rt[i]!) ? decIter(ti, v, its.get(i)!) : dec.value(v, rt[i]!);
     });
@@ -821,9 +831,9 @@ export function typesToSnapshot(prog: Program, st: TypesState, base: any): any {
     types = t2;
     if (!grew) break;
   }
+  // a map no typed path reaches is garbage: its key and value types are unknown
   isMap.forEach((m, o) => {
-    if (m && !mapsDone.has(o))
-      throw new Error(`codec-heap: map object ${o} is reached by no typed path`);
+    if (m && !mapsDone.has(o)) partial.objects[o] = { k: "o", s: [] };
   });
   raw.forEach(
     (r, o) =>

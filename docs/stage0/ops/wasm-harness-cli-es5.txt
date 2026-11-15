@@ -1,0 +1,7 @@
+main.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+exit 1
+exit 0
+  start                              34546530
+  cli                                94214495
+  end                                    7983
+  TOTAL                             128769008

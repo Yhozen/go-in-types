@@ -1,0 +1,299 @@
+# cli mini
+
+target output:
+main.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+exit 1
+
+phases:
+  init                              1077976
+  start                                 957
+  cli                                336138
+  end                                   388
+  TOTAL                             1415459
+
+package initializers not interpreted: encoding/json/internal.init encoding/json/internal/jsonflags.init encoding/json/internal/jsonopts.init encoding/json/internal/jsonwire.init encoding/json/jsontext.init encoding/json/v2.init errors.init github.com/go-json-experiment/json.init github.com/go-json-experiment/json/jsontext.init golang.org/x/sys/unix.init internal/abi.init internal/asan.init internal/bisect.init internal/bytealg.init internal/byteorder.init internal/chacha8rand.init internal/coverage/rtcov.init internal/cpu.init internal/filepathlite.init internal/fmtsort.init internal/goarch.init internal/godebug.init internal/godebugs.init internal/goexperiment.init internal/goos.init internal/msan.init internal/oserror.init internal/poll.init internal/profilerecord.init internal/race.init internal/reflectlite.init internal/runtime/atomic.init internal/runtime/exithook.init internal/runtime/gc.init internal/runtime/gc/scan.init internal/runtime/maps.init internal/runtime/math.init internal/runtime/pprof/label.init internal/runtime/sys.init internal/strconv.init internal/stringslite.init internal/sync.init internal/synctest.init internal/syscall/execenv.init internal/syscall/unix.init internal/sysinfo.init internal/testlog.init internal/trace/tracev2.init internal/unsafeheader.init net/netip.init net/url.init os.init reflect.init runtime.init runtime/debug.init runtime/pprof.init runtime/trace.init sync.init sync/atomic.init syscall.init time.init unique.init unsafe.init
+
+### whole run except warm phases
+
+instructions: 1415459
+
+by op:
+  BinOp                        259842
+  If                           193697
+  FieldAddr                    167066
+  Store                        162905
+  UnOp                         141660
+  Phi                           99307
+  IndexAddr                     98197
+  Call                          81457
+  Jump                          54549
+  Return                        44185
+  Alloc                         36553
+  Index                         19923
+  Convert                       16302
+  ChangeType                    10636
+  Slice                          8948
+  Extract                        8531
+  MapUpdate                      5977
+  Lookup                         1494
+  MakeClosure                    1169
+  MakeInterface                   908
+  TypeAssert                      650
+  Next                            470
+  MakeSlice                       349
+  RunDefers                       224
+  Defer                           206
+  MakeMap                         170
+  Range                            39
+  Field                            34
+  ChangeInterface                  10
+  MakeChan                          1
+events:
+  call (static)                               36077
+  call (builtin len)                          30402
+  alloc (local)                               26057
+  alloc (heap)                                10496
+  call (func value)                            6124
+  map update                                   5977
+  call (builtin append)                        4369
+  call (interface method)                      1948
+  map lookup                                   1494
+  call (builtin cap)                           1169
+  call (closure literal)                        702
+  call (builtin copy)                           432
+  map range next                                374
+  xxh3 bytes hashed (external)                  267
+  defer (closure literal)                       114
+  string range next                              96
+  call (builtin max)                             95
+  defer (static)                                 88
+  call (builtin min)                             83
+  call (builtin recover)                         45
+  map range                                      23
+  string range                                   16
+  call (builtin clear)                            9
+  defer (func value)                              4
+  call (builtin close)                            1
+  call (builtin delete)                           1
+by package:
+  strings                                                            228743   16.2%
+  regexp/syntax                                                      218098   15.4%
+  unicode                                                             99475    7.0%
+  regexp                                                              96409    6.8%
+  golang.org/x/text/language                                          94686    6.7%
+  golang.org/x/text/internal/language                                 89995    6.4%
+  golang.org/x/text/unicode/norm                                      73809    5.2%
+  sort                                                                60214    4.3%
+  github.com/microsoft/typescript-go/internal/scanner                 60108    4.2%
+  github.com/microsoft/typescript-go/internal/ast                     52923    3.7%
+  github.com/microsoft/typescript-go/internal/stringutil              52787    3.7%
+  github.com/microsoft/typescript-go/internal/parser                  35917    2.5%
+  github.com/microsoft/typescript-go/internal/collections             29957    2.1%
+  hash/crc32                                                          28953    2.0%
+  github.com/microsoft/typescript-go/internal/checker                 24576    1.7%
+  github.com/microsoft/typescript-go/internal/binder                  23170    1.6%
+  github.com/microsoft/typescript-go/internal/diagnostics             22174    1.6%
+  golang.org/x/text/internal/tag                                      15271    1.1%
+  github.com/microsoft/typescript-go/internal/tsoptions               14827    1.0%
+  github.com/microsoft/typescript-go/internal/core                    14516    1.0%
+  internal/bytealg                                                    11494    0.8%
+  github.com/microsoft/typescript-go/internal/tspath                  10001    0.7%
+  slices                                                               8003    0.6%
+  golang.org/x/text/internal/language/compact                          6203    0.4%
+  github.com/microsoft/typescript-go/internal/compiler                 5199    0.4%
+  fmt                                                                  4039    0.3%
+  math/rand                                                            3556    0.3%
+  unicode/utf8                                                         3489    0.2%
+  encoding/base64                                                      3031    0.2%
+  strconv                                                              2653    0.2%
+  compress/flate                                                       2551    0.2%
+  github.com/microsoft/typescript-go/internal/printer                  2419    0.2%
+  github.com/microsoft/typescript-go/internal/bundled                  1659    0.1%
+  sync                                                                 1651    0.1%
+  internal/stringslite                                                 1424    0.1%
+  math/bits                                                            1155    0.1%
+  github.com/microsoft/typescript-go/internal/lsp/lsproto               985    0.1%
+  math                                                                  934    0.1%
+  maps                                                                  707    0.0%
+  internal/sync                                                         660    0.0%
+  time                                                                  616    0.0%
+  internal/strconv                                                      572    0.0%
+  github.com/zeebo/xxh3                                                 408    0.0%
+  errors                                                                394    0.0%
+  sync/atomic                                                           373    0.0%
+  github.com/microsoft/typescript-go/internal/execute/tsc               329    0.0%
+  github.com/microsoft/typescript-go/internal/module                    299    0.0%
+  github.com/microsoft/typescript-go/internal/transformers/jsxtransforms          272    0.0%
+  github.com/microsoft/typescript-go/internal/ls/lsutil                 254    0.0%
+  github.com/microsoft/typescript-go/cmd/opsharness                     243    0.0%
+  github.com/microsoft/typescript-go/internal/execute                   240    0.0%
+  github.com/microsoft/typescript-go/internal/vfs/cachedvfs             185    0.0%
+  github.com/microsoft/typescript-go/internal/semver                    179    0.0%
+  cmp                                                                   154    0.0%
+  github.com/microsoft/typescript-go/internal/pseudochecker             150    0.0%
+  math/big                                                              143    0.0%
+  github.com/microsoft/typescript-go/internal/diagnosticwriter          137    0.0%
+  github.com/microsoft/typescript-go/internal/debug                     135    0.0%
+  bytes                                                                 125    0.0%
+  io                                                                    116    0.0%
+  github.com/microsoft/typescript-go/internal/fswatch                   108    0.0%
+  github.com/microsoft/typescript-go/internal/outputpaths               105    0.0%
+  github.com/microsoft/typescript-go/internal/transformers/estransforms          105    0.0%
+  github.com/microsoft/typescript-go/internal/packagejson               104    0.0%
+  context                                                                98    0.0%
+  github.com/microsoft/typescript-go/internal/transformers               94    0.0%
+  testing                                                                84    0.0%
+  github.com/microsoft/typescript-go/internal/json                       65    0.0%
+  io/fs                                                                  60    0.0%
+  github.com/microsoft/typescript-go/internal/vfs                        58    0.0%
+  iter                                                                   56    0.0%
+  github.com/microsoft/typescript-go/internal/tracing                    45    0.0%
+  flag                                                                   44    0.0%
+  github.com/microsoft/typescript-go/internal/jsnum                      41    0.0%
+  bufio                                                                  40    0.0%
+  github.com/microsoft/typescript-go/internal/vfs/vfsmatch               38    0.0%
+  github.com/microsoft/typescript-go/internal/execute/incremental           37    0.0%
+  path/filepath                                                          34    0.0%
+  github.com/microsoft/typescript-go/internal/modulespecifiers           33    0.0%
+  github.com/microsoft/typescript-go/internal/locale                     31    0.0%
+  github.com/microsoft/typescript-go/internal/execute/build              26    0.0%
+  github.com/microsoft/typescript-go/internal/format                     24    0.0%
+  golang.org/x/text/transform                                            23    0.0%
+  github.com/microsoft/typescript-go/internal/evaluator                  22    0.0%
+  github.com/microsoft/typescript-go/internal/transformers/declarations           22    0.0%
+  encoding/binary                                                        21    0.0%
+  github.com/microsoft/typescript-go/internal/jsonrpc                    20    0.0%
+  github.com/microsoft/typescript-go/internal/sourcemap                  20    0.0%
+  compress/gzip                                                          19    0.0%
+  embed                                                                  18    0.0%
+  github.com/microsoft/typescript-go/internal/execute/watchmanager           17    0.0%
+  github.com/microsoft/typescript-go/internal/astnav                     15    0.0%
+  github.com/microsoft/typescript-go/internal/transformers/moduletransforms           15    0.0%
+  github.com/microsoft/typescript-go/internal/pprof                      14    0.0%
+  github.com/microsoft/typescript-go/internal/symlinks                   14    0.0%
+  github.com/microsoft/typescript-go/internal/transformers/tstransforms           14    0.0%
+  github.com/microsoft/typescript-go/internal/glob                       13    0.0%
+  github.com/microsoft/typescript-go/internal/nativepath                 13    0.0%
+  github.com/microsoft/typescript-go/internal/transformers/inliners           13    0.0%
+  encoding/hex                                                           12    0.0%
+  github.com/microsoft/typescript-go/internal/nodebuilder                12    0.0%
+  unicode/utf16                                                          11    0.0%
+  path                                                                   10    0.0%
+  hash                                                                    9    0.0%
+  encoding                                                                8    0.0%
+  github.com/microsoft/typescript-go/internal/vfs/trackingvfs             8    0.0%
+  golang.org/x/sync/errgroup                                              8    0.0%
+  internal/godebug                                                        8    0.0%
+  encoding/json/jsontext                                                  3    0.0%
+  github.com/go-json-experiment/json/jsontext                             2    0.0%
+top functions:
+        181364   12.8%  strings.ToLower
+         83502    5.9%  unicode.init
+         73805    5.2%  golang.org/x/text/unicode/norm.init
+         51515    3.6%  sort.Search
+         45345    3.2%  github.com/microsoft/typescript-go/internal/stringutil.init
+         44112    3.1%  regexp/syntax.appendRange
+         41936    3.0%  golang.org/x/text/language.altScript
+         31964    2.3%  golang.org/x/text/internal/language.init
+         29124    2.1%  (*github.com/microsoft/typescript-go/internal/ast.Node).ForEachChild
+         28933    2.0%  hash/crc32.simplePopulateTable
+         23369    1.7%  regexp.makeOnePass$1
+         22685    1.6%  (*github.com/microsoft/typescript-go/internal/scanner.Scanner).Scan
+         21759    1.5%  github.com/microsoft/typescript-go/internal/diagnostics.init
+         18333    1.3%  golang.org/x/text/internal/language.normLang$1
+         17692    1.2%  (*strings.Builder).copyCheck
+         17099    1.2%  golang.org/x/text/language.canonicalize
+         15973    1.1%  unicode.SimpleFold
+         14280    1.0%  (regexp/syntax.ranges).Swap
+         13292    0.9%  (*regexp.queueOnePass).contains
+         12023    0.8%  (regexp/syntax.ranges).Less
+         10834    0.8%  regexp/syntax.appendFoldedRange
+         10185    0.7%  (*github.com/microsoft/typescript-go/internal/scanner.Scanner).scanASCIIWhile
+          9849    0.7%  golang.org/x/text/internal/tag.cmp
+          9819    0.7%  (*regexp/syntax.parser).push
+          9514    0.7%  regexp.mergeRuneSets$2
+          9444    0.7%  (*regexp/syntax.Regexp).MaxCap
+          8936    0.6%  regexp/syntax.parse
+          8710    0.6%  (*github.com/microsoft/typescript-go/internal/binder.Binder).bind
+          8321    0.6%  regexp.onePassCopy
+          8231    0.6%  (*regexp/syntax.compiler).compile
+functions executed: 1904
+externals (calls not interpreted):
+  internal/bytealg.MakeNoZero                                           353
+  sync/atomic.AddInt32                                                   66
+  sync/atomic.CompareAndSwapInt32                                        60
+  (*github.com/zeebo/xxh3.Hasher).Write                                  57
+  sync/atomic.LoadUint32                                                 55
+  sync.init                                                              39
+  errors.init                                                            30
+  sync/atomic.StoreUint32                                                21
+  time.init                                                              20
+  sync/atomic.init                                                       14
+  (*github.com/zeebo/xxh3.Hasher).Sum128                                 13
+  reflect.init                                                           13
+  unsafe.init                                                            13
+  os.init                                                                 9
+  runtime.init                                                            8
+  internal/bytealg.init                                                   7
+  github.com/zeebo/xxh3.HashString128                                     6
+  internal/stringslite.init                                               4
+  github.com/microsoft/typescript-go/cmd/opsharness.Mark                  3
+  internal/byteorder.init                                                 3
+  syscall.init                                                            3
+  (*github.com/zeebo/xxh3.Hasher).WriteString                             2
+  (reflect.rtype).Kind                                                    2
+  github.com/microsoft/typescript-go/cmd/opsharness.Output                2
+  golang.org/x/sys/unix.init                                              2
+  internal/race.init                                                      2
+  internal/reflectlite.init                                               2
+  reflect.TypeFor[byte]                                                   2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/core.CompilerOptions]            2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/core.Tristate]            2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.JsxAttributeCompletionStyle]            2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.OrganizeImportsCaseFirst]            2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.OrganizeImportsCollation]            2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.OrganizeImportsSort]            2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.OrganizeImportsTypeOrder]            2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/modulespecifiers.ImportModuleSpecifierEndingPreference]            2
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/modulespecifiers.ImportModuleSpecifierPreference]            2
+  reflect.TypeFor[rune]                                                   2
+  reflect.TypeOf                                                          2
+  runtime/debug.init                                                      2
+  slices.overlaps[*github.com/microsoft/typescript-go/internal/checker.Type]            2
+  sync/atomic.LoadInt32                                                   2
+  github.com/go-json-experiment/json.init                                 1
+  github.com/go-json-experiment/json/jsontext.init                        1
+  github.com/microsoft/typescript-go/cmd/opsharness.Input                 1
+  internal/cpu.init                                                       1
+  internal/filepathlite.init                                              1
+  internal/fmtsort.init                                                   1
+  internal/godebug.init                                                   1
+  internal/oserror.init                                                   1
+  internal/strconv.init                                                   1
+  internal/sysinfo.init                                                   1
+  maps.clone                                                              1
+  math.Copysign                                                           1
+  math.IsNaN                                                              1
+  net/url.init                                                            1
+  reflect.TypeFor[*github.com/microsoft/typescript-go/internal/collections.OrderedMap[string, any]]            1
+  reflect.TypeFor[[]byte]                                                 1
+  reflect.TypeFor[bool]                                                   1
+  reflect.TypeFor[float32]                                                1
+  reflect.TypeFor[float64]                                                1
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.IncludeInlayParameterNameHints]            1
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.IndentStyle]            1
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.QuotePreference]            1
+  reflect.TypeFor[github.com/microsoft/typescript-go/internal/ls/lsutil.SemicolonPreference]            1
+  reflect.TypeFor[int16]                                                  1
+  reflect.TypeFor[int64]                                                  1
+  reflect.TypeFor[int8]                                                   1
+  reflect.TypeFor[int]                                                    1
+  reflect.TypeFor[string]                                                 1
+  reflect.TypeFor[uint16]                                                 1
+  reflect.TypeFor[uint32]                                                 1
+  reflect.TypeFor[uint64]                                                 1
+  reflect.TypeFor[uint]                                                   1
+  runtime/pprof.init                                                      1
+  runtime/trace.init                                                      1
+  sync/atomic.AddUint32                                                   1
+

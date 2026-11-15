@@ -1,0 +1,25 @@
+main.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+main.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
+exit 0
+  start                              34308311
+  options                              601541
+  program                              378624
+  parse main.ts                         65162
+  parse lib.mini.d.ts                  696354
+  diagnostics                           29559
+  bind                                 318334
+  global                               667199
+  check                                263359
+  emit                                  31498
+  print                                 95149
+  end                                    5632
+  warm:options                         608695
+  warm:program                         368990
+  warm:parse main.ts                    59987
+  warm:diagnostics                      30610
+  warm:bind                             45935
+  warm:global                          654595
+  warm:check                           203485
+  warm:emit                             30426
+  warm:print                            73563
+  TOTAL                              39537008

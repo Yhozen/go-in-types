@@ -1,0 +1,49 @@
+# phased mini
+
+target output:
+
+phases:
+  init                                    6
+  loop                                   76
+  calls                                  69
+  map                                     4
+  end                                     3
+  TOTAL                                 158
+
+package initializers not interpreted: 
+
+### whole run except warm phases
+
+instructions: 158
+
+by op:
+  BinOp                            48
+  Phi                              31
+  If                               17
+  Jump                             12
+  Call                             10
+  UnOp                             10
+  FieldAddr                         9
+  Return                            6
+  Store                             6
+  Alloc                             5
+  MapUpdate                         2
+  MakeInterface                     1
+  MakeMap                           1
+events:
+  alloc (local)                                   5
+  call (interface method)                         4
+  call (static)                                   4
+  map update                                      2
+  call (builtin len)                              1
+  call (builtin println)                          1
+by package:
+  github.com/microsoft/typescript-go/cmd/opsvalidate                    158  100.0%
+top functions:
+           121   76.6%  github.com/microsoft/typescript-go/cmd/opsvalidate.main
+            32   20.3%  (github.com/microsoft/typescript-go/cmd/opsvalidate.sq).area
+             5    3.2%  github.com/microsoft/typescript-go/cmd/opsvalidate.init
+functions executed: 3
+externals (calls not interpreted):
+  github.com/microsoft/typescript-go/cmd/opsvalidate.Mark                 4
+

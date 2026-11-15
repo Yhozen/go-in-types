@@ -163,7 +163,19 @@ type RetC<P extends ProgB, H, C, K, X, F, V> =
 // (one per continuation below the frame); panic serials "s", "sx", ...
 
 /** Records of the panic chain: [V, Recovered, Repanicked, Depth, Serial, Str]. */
-type KLen<K, A extends string> = K extends null ? A : KLen<I1<K>, `${A}x`>;
+export type KLen<K, A extends string> = K extends null ? A : KLen<I1<K>, `${A}x`>;
+/**
+ * K with Rec pushed onto the defer list of the frame at depth Dx (a
+ * deferstack value: the number of frames below it), for range-over-func.
+ */
+export type DeferAt<K, Dx, Rec> =
+  KLen<K, ""> extends `${Dx & string}x${infer J extends string}` ? DeferAtJ<K, J, Rec> : K;
+/** [K, D] after a defer onto frame Dx: the running frame (defer list D) when it is at depth Dx. */
+export type DeferOn<K, D, Dx, Rec> =
+  KLen<K, ""> extends Dx ? Mk2<K, Cons<Rec, D>> : Mk2<DeferAt<K, Dx, Rec>, D>;
+type DeferAtJ<K, J, Rec> = J extends `x${infer J2}`
+  ? Cons<I0<K>, DeferAtJ<I1<K>, J2, Rec>>
+  : Cons<Ct<I0<I0<K>>, I1<I0<K>>, I2<I0<K>>, Cons<Rec, I3<I0<K>>>, I4<I0<K>>, I5<I0<K>>>, I1<K>>;
 type LtX<A, B> = B extends `${A & string}x${string}` ? true : false;
 type XPn<X, Pn> = Xt<I0<X>, I1<X>, Pn, I3<X>>;
 /** X with stderr extended by S. */

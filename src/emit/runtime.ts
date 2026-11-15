@@ -13,6 +13,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const RUNTIME_FILES: [string, string][] = [
   ["src/emit/rt.ts", "rt"],
   ["src/emit/fuel.gen.ts", "fuel.gen"],
+  ["src/emit/chacha.ts", "chacha"],
   ["src/types/int.ts", "int"],
   ["src/types/int-pairs.gen.ts", "int-pairs.gen"],
   ["src/types/int-tables.gen.ts", "int-tables.gen"],

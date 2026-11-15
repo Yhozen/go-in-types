@@ -151,6 +151,7 @@ class Emitter {
     head.push(`import type * as Hp from "${rt}/heap.d.ts";`);
     head.push(`import type * as Sr from "${rt}/str.d.ts";`);
     head.push(`import type * as Mp from "${rt}/map.d.ts";`);
+    head.push(`import type * as Ch from "${rt}/chacha.d.ts";`);
     head.push(`import type { EB } from "${rt}/rt.d.ts";`);
 
     p.funcs.forEach((f, fid) => this.func(f, fid));
@@ -454,7 +455,12 @@ class FuncEmitter {
     this.f = f;
     this.fid = fid;
     this.hasD = f.blocks.some((b) =>
-      b.instrs.some((i) => i.op === "defer" || i.op === "runDefers"),
+      b.instrs.some(
+        (i) =>
+          i.op === "defer" ||
+          i.op === "runDefers" ||
+          (i.op === "call" && "builtin" in i.callee && i.callee.builtin === "deferstack"),
+      ),
     );
     this.rregs = [];
     if (f.body === "ir" && f.recover >= 0) {
@@ -622,6 +628,12 @@ class SegB {
     this.e = fe.e;
     this.name = name;
     this.params = params;
+  }
+
+  isChacha(ins: Instr): boolean {
+    if (ins.op !== "call" || !("static" in ins.callee)) return false;
+    const g = this.e.prog.funcs[ins.callee.static]!;
+    return g.body === "intrinsic" && (g.intrinsic ?? g.name) === "internal/chacha8rand.block";
   }
 
   fresh(): string {
@@ -912,7 +924,7 @@ class SegB {
   instr(ins: Instr, b: Block, bi: number): void {
     const e = this.e;
     const T = e.T;
-    this.gCost += opCost(ins);
+    this.gCost += opCost(ins) + (this.isChacha(ins) ? CHACHA_COST : 0);
     if (
       this.binds >= 2 ||
       this.heapNest >= MAX_HEAP_NEST ||
@@ -1482,12 +1494,6 @@ class SegB {
   deferOp(ins: Extract<Instr, { op: "defer" }>): void {
     const c = ins.callee;
     const e = this.e;
-    if (ins.stack) {
-      this.end(
-        `R.Trap<${this.H}, ${this.K}, ${this.X}, ${strLit(`trap: defer onto another frame (range-over-func) is not supported in types (in ${this.fe.f.name})\n`)}>`,
-      );
-      return;
-    }
     const argv = ins.args.map((o) => this.val(o).t);
     let rec: string;
     if ("static" in c) rec = `[${n2(c.static)}, [${argv.join(", ")}], []]`;
@@ -1503,6 +1509,19 @@ class SegB {
       // builtin defers: record name, args and the static print info
       const info = ins.args.map((o) => this.printInfo(this.typeOf(o)));
       rec = `["b:${c.builtin}", [${argv.join(", ")}], [${info.join(", ")}]]`;
+    }
+    if (ins.stack) {
+      // onto the frame a deferstack value names (range-over-func bodies)
+      const sx = this.atom(ins.stack);
+      if (!this.fe.hasD) {
+        this.K = this.bind(`R.DeferAt<${this.K}, ${sx}, ${rec}>`);
+        return;
+      }
+      // the frame itself when it is the one deferstack named
+      const kd = this.bind(`R.DeferOn<${this.K}, ${this.dText()}, ${sx}, ${rec}>`);
+      this.K = this.atomV(`${kd}[0]`);
+      this.env.set(D_REG, { t: this.atomV(`${kd}[1]`), atom: true });
+      return;
     }
     const d = this.dText();
     const nd = this.bind(`R.Cons<${rec}, ${d}>`);
@@ -1670,9 +1689,8 @@ class SegB {
         return set(p, { atom: true });
       }
       case "deferstack":
-        return this.end(
-          `R.Trap<${this.H}, ${this.K}, ${this.X}, ${strLit(`trap: deferstack is not supported in types (in ${this.fe.f.name})\n`)}>`,
-        );
+        // the running frame's depth: the number of frames below it
+        return set(`R.KLen<${this.K}, "">`);
     }
     throw new Error("unknown builtin " + name);
   }
@@ -1753,6 +1771,11 @@ class SegB {
       case "sync.runtime_procPin":
       case "sync/atomic.runtime_procPin":
         return `"0"`;
+      case "internal/chacha8rand.block": {
+        const [sd, bf, ct] = [a(0), a(1), a(2)];
+        this.heapWrite((h) => `Ch.Block<${h}, ${sd}, ${bf}, ${ct}>`);
+        return null;
+      }
       case "time.runtimeNow":
         return `["0", "0", "0"]`;
       case "time.runtimeIsBubbled":
@@ -1850,6 +1873,9 @@ function cachedFE(e: Emitter, g: Func, gid: number): FuncEmitter {
 }
 
 /** Estimated instantiations of an instruction (fuel weights). */
+/** Estimated instantiations of one chacha8rand.block (4 lanes of 8 rounds on u32). */
+const CHACHA_COST = 450_000;
+
 function opCost(ins: Instr): number {
   switch (ins.op) {
     case "store":

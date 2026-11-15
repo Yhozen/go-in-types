@@ -424,6 +424,9 @@ export async function runTypes(o: TypesOptions): Promise<TypesResult> {
       const st = startState(prog, snap, {
         rt: "./rt",
         emitted: readFileSync(join(dir, "prog.d.ts"), "utf8"),
+        entries: existsSync(join(dir, "prog.entries.json"))
+          ? JSON.parse(readFileSync(join(dir, "prog.entries.json"), "utf8"))
+          : undefined,
       });
       writeFileSync(join(dir, "start.d.ts"), st.module);
       startOps = st.ops;

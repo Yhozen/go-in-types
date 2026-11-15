@@ -7,7 +7,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import type { Program } from "../src/ir/types.ts";
-import { emit, type EmitStats } from "../src/emit/emit.ts";
+import { emit, type EmitStats, type EntryInfo } from "../src/emit/emit.ts";
 import { writeRuntime } from "../src/emit/runtime.ts";
 
 const argv = process.argv.slice(2);
@@ -40,14 +40,18 @@ const stats = {} as EmitStats;
 const rtDir = resolve(opt("--runtime") ?? join(dirname(out), "rt"));
 writeRuntime(rtDir);
 const rtRel = relative(dirname(out), rtDir).replaceAll("\\", "/");
+const entries: EntryInfo[] = [];
 const text = emit(
   prog,
   { rt: rtRel.startsWith(".") ? rtRel : "./" + rtRel, keep, prefix: opt("--prefix") },
   stats,
+  entries,
 );
 const t2 = performance.now();
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, text);
+// the sidecar entry table (EMIT.md "Entries")
+writeFileSync(out.replace(/\.d\.ts$/, "") + ".entries.json", JSON.stringify(entries));
 console.error(
   `emit: ${out}: ${(stats.bytes / 1e6).toFixed(2)} MB, ${stats.funcs} funcs, ${stats.blocks} blocks, ${stats.segments} segments, ${stats.entries} entries; parse ${((t1 - t0) / 1000).toFixed(2)} s, emit ${((t2 - t1) / 1000).toFixed(2)} s`,
 );

@@ -1,5 +1,6 @@
 // State codec: a reference snapshot (src/ref/snapshot.ts) <-> the type-level
 // machine state the emitter's code runs on (docs/EMIT.md).
+import type { EntryInfo } from "../emit/emit.ts";
 import type { Program } from "../ir/types.ts";
 import type { Machine } from "../ref/interp.ts";
 import { restore, snapshot } from "../ref/snapshot.ts";
@@ -93,6 +94,71 @@ export function callSites(prog: Program, fid: number): Map<number, number> {
   return m;
 }
 
+/**
+ * The entries a start state can use: layouts by key, and the keys at a
+ * function's instruction index (pc). Built from the emitter's sidecar
+ * entry table (emit()'s `entries`, `<out>.entries.json`; EMIT.md
+ * "Entries"), or, without one, from the emitted text (block starts and call
+ * sites in the emitter's numbering).
+ */
+export interface Entries {
+  lays: Map<string, EntryLayout>;
+  /** the block or mid-block entry that resumes before instruction pc */
+  at(fid: number, pc: number): string | undefined;
+  /** the return point of the call (or runDefers) instruction at pc */
+  site(fid: number, pc: number): string | undefined;
+  /** the call instruction of a return point */
+  callPc(key: string): number;
+}
+
+export function entries(prog: Program, src: string | EntryInfo[]): Entries {
+  if (typeof src === "string") {
+    const lays = entryLayouts(src);
+    const starts = (fid: number) => {
+      const r: number[] = [];
+      let pc = 0;
+      for (const b of prog.funcs[fid]!.blocks) {
+        r.push(pc);
+        pc += b.instrs.length;
+      }
+      return r;
+    };
+    return {
+      lays,
+      at: (fid, pc) => {
+        const bi = starts(fid).indexOf(pc);
+        return bi >= 0 && lays.has(`b${fid}_${bi}`) ? `b${fid}_${bi}` : undefined;
+      },
+      site: (fid, pc) => {
+        const n = callSites(prog, fid).get(pc);
+        return n !== undefined && lays.has(`c${fid}_${n}`) ? `c${fid}_${n}` : undefined;
+      },
+      callPc: (key) => {
+        const [, fid, n] = /^c(\d+)_(\d+)$/.exec(key)!;
+        for (const [pc, k] of callSites(prog, Number(fid))) if (k === Number(n)) return pc;
+        throw new Error(`no call site ${key}`);
+      },
+    };
+  }
+  const lays = new Map<string, EntryLayout>();
+  const at = new Map<string, string>();
+  const site = new Map<string, string>();
+  const pcOf = new Map<string, number>();
+  for (const e of src) {
+    if (e.kind === "recover") continue;
+    lays.set(e.key, { key: e.key, regs: e.regs, hasD: e.hasD });
+    pcOf.set(e.key, e.pc);
+    if (e.kind === "call") site.set(`${e.fid}:${e.pc}`, e.key);
+    else if (e.kind === "block" || !at.has(`${e.fid}:${e.pc}`)) at.set(`${e.fid}:${e.pc}`, e.key);
+  }
+  return {
+    lays,
+    at: (fid, pc) => at.get(`${fid}:${pc}`),
+    site: (fid, pc) => site.get(`${fid}:${pc}`),
+    callPc: (key) => pcOf.get(key)!,
+  };
+}
+
 // ---------------------------------------------------------------- start states
 
 export interface StartState {
@@ -107,8 +173,10 @@ export interface StartState {
 export interface StartOptions {
   /** import path of the emitted program's runtime directory (src/emit/runtime.ts) from the module */
   rt: string;
-  /** the emitted module's text (for its entry layouts) */
+  /** the emitted module's text (for its entry layouts, without `entries`) */
   emitted: string;
+  /** the emitter's entry table (preferred: adds mid-block entries) */
+  entries?: EntryInfo[];
   /** give up after this many reference ops looking for a startable point */
   maxAdvance?: number;
 }
@@ -116,24 +184,20 @@ export interface StartOptions {
 const DM_NONE = 0;
 
 /** Why machine state m cannot be a type-level start (null: it can). */
-export function unstartable(m: Machine, lays: Map<string, EntryLayout>): string | null {
+export function unstartable(m: Machine, ents: Entries): string | null {
   if (m.curPanic !== null || m.dying !== null) return "panicking";
   const st = m.stack;
   if (st.length === 0) return null;
   const top = st[st.length - 1]!;
   if (top.dmode !== DM_NONE) return "top frame running defers";
-  const bi = top.d.start.indexOf(top.pc);
-  if (bi < 0) return "top frame inside a block";
-  if (!lays.has(`b${top.d.id}_${bi}`)) return `no entry b${top.d.id}_${bi}`;
+  if (ents.at(top.d.id, top.pc) === undefined) return "top frame inside a block (no entry)";
   for (let i = 0; i < st.length; i++) {
     const f = st[i]!;
     if (f.dst < -1) return "printing a panic";
     if (f.defers?.some((d) => d.bpc >= 0)) return "builtin defer";
     if (i === st.length - 1) break;
     if (i === 0 && f.d.id === m.prog.main && f.pc === 0) continue; // main, not started
-    const n = callSites(m.prog, f.d.id).get(f.pc - 1);
-    if (n === undefined) return `frame ${i} not at a call site`;
-    if (!lays.has(`c${f.d.id}_${n}`)) return `no entry c${f.d.id}_${n}`;
+    if (ents.site(f.d.id, f.pc - 1) === undefined) return `frame ${i} not at a call site`;
     if (f.dmode !== DM_NONE && f.dmode !== 1) return `frame ${i} unwinding`;
   }
   return null;
@@ -147,26 +211,22 @@ export function unstartable(m: Machine, lays: Map<string, EntryLayout>): string 
  * flight), or to the end of the run.
  */
 export function startState(prog: Program, snap0: any, o: StartOptions): StartState {
-  const lays = entryLayouts(o.emitted);
+  const ents = entries(prog, o.entries ?? o.emitted);
   const m = restore(prog, snap0);
   const limit = m.ops + (o.maxAdvance ?? 1_000_000);
   let why: string | null;
-  while ((why = unstartable(m, lays)) !== null) {
+  while ((why = unstartable(m, ents)) !== null) {
     if (m.ops >= limit)
       throw new Error(`no startable point within ${o.maxAdvance ?? 1e6} ops: ${why}`);
     if (m.run(m.ops + 1) === "done") break;
   }
   const snap = JSON.parse(JSON.stringify(snapshot(m, snap0.program.path)));
-  return { module: stateModule(prog, snap, lays, o), ops: m.ops, snap };
+  return { module: stateModule(prog, snap, ents, o), ops: m.ops, snap };
 }
 
 /** The state module of a startable snapshot. */
-export function stateModule(
-  prog: Program,
-  snap: any,
-  lays: Map<string, EntryLayout>,
-  o: StartOptions,
-): string {
+export function stateModule(prog: Program, snap: any, ents: Entries, o: StartOptions): string {
+  const lays = ents.lays;
   const ti = new TypeInfo(prog);
   const heapMod = snapshotToTypes(prog, snap, `${o.rt}/heap.gen.d.ts`).heap.replace(
     /^export type Heap/m,
@@ -201,32 +261,26 @@ export function stateModule(
     lines.push(`export type Start = R.St<"x", "", Heap, null, ${X}, ${snap.exit ?? 0}, "">;`);
     return lines.join("\n") + "\n";
   }
-  // the bottom: "m" (call main) while init runs, "b" (end the run) under main
+  // the bottom: "b" (end the run), and "m" (call main) above it while init
+  // runs, as in the emitted start state (stack indices match the reference's)
   const mainWaits = frames.length > 1 && frames[0].fn === prog.main && frames[0].pc === 0;
-  let K = mainWaits ? "null" : `R.Cons<R.Ct<"b", "", [], null, "0", "">, null>`;
+  let K = `R.Cons<R.Ct<"b", "", [], null, "0", "">, null>`;
   for (let i = 0; i < frames.length - 1; i++) {
     const fr = frames[i];
     if (i === 0 && mainWaits) {
       K = `R.Cons<R.Ct<"m", "", [], null, ${n2(fr.fn)}, "">, ${K}>`;
       continue;
     }
-    const n = callSites(prog, fr.fn).get(fr.pc - 1)!;
-    const lay = lays.get(`c${fr.fn}_${n}`)!;
+    const ck = ents.site(fr.fn, fr.pc - 1)!;
+    const lay = lays.get(ck)!;
     const regs = `[${lay.regs.map((r) => reg(fr, r)).join(", ")}]`;
     const D = lay.hasD ? deferList(fr) : "null";
     const kind = fr.dm === DM_NONE ? "n" : "d";
     const mode = fr.dm === DM_NONE ? '""' : '"r"';
-    K = `R.Cons<R.Ct<"${kind}", "c${fr.fn}_${n}", ${regs}, ${D}, ${n2(fr.fn)}, ${mode}>, ${K}>`;
+    K = `R.Cons<R.Ct<"${kind}", "${ck}", ${regs}, ${D}, ${n2(fr.fn)}, ${mode}>, ${K}>`;
   }
   const top = frames[frames.length - 1];
-  const starts: number[] = [];
-  let pc = 0;
-  for (const b of prog.funcs[top.fn]!.blocks) {
-    starts.push(pc);
-    pc += b.instrs.length;
-  }
-  const bi = starts.indexOf(top.pc);
-  const key = `b${top.fn}_${bi}`;
+  const key = ents.at(top.fn, top.pc)!;
   const lay = lays.get(key)!;
   const A = `[${lay.regs.map((r) => (r < 0 ? deferList(top) : reg(top, r))).join(", ")}]`;
   lines.push(`type K0 = ${K};`);
@@ -243,8 +297,14 @@ export function stateModule(
  * stderr. Fields the type level does not hold (counts, panics) come from
  * `base`.
  */
-export function decodeStart(prog: Program, module: string, emitted: string, base: any): any {
-  const lays = entryLayouts(emitted);
+export function decodeStart(
+  prog: Program,
+  module: string,
+  emitted: string | EntryInfo[],
+  base: any,
+): any {
+  const ents = entries(prog, emitted);
+  const lays = ents.lays;
   const decls = parseModule(module);
   const S = decls.get("Start") as any;
   const args = (t: TV): TV[] => {
@@ -259,10 +319,6 @@ export function decodeStart(prog: Program, module: string, emitted: string, base
   const [tag, key, , K, X, A] = args(S);
   const x = args(X!);
   const ti = new TypeInfo(prog);
-  const callPc = (fid: number, n: number) => {
-    for (const [pc, k] of callSites(prog, fid)) if (k === n) return pc;
-    throw new Error(`decodeStart: no call site c${fid}_${n}`);
-  };
   const deferRecs = (D: TV): any[] | null => {
     const out: any[] = [];
     for (let d = D; d !== null && d !== undefined;) {
@@ -277,10 +333,8 @@ export function decodeStart(prog: Program, module: string, emitted: string, base
     [];
   if (str(tag!) !== "x") {
     const k0 = str(key!);
-    const [, fid, bi] = /^b(\d+)_(\d+)$/.exec(k0)!;
-    const f = prog.funcs[Number(fid)]!;
-    let pc = 0;
-    for (let b = 0; b < Number(bi); b++) pc += f.blocks[b]!.instrs.length;
+    const fid = /^b(\d+)_/.exec(k0)![1]!;
+    const pc = blockPc(prog, ents, k0);
     const lay = lays.get(k0)!;
     const a = args(A!);
     const regs: (TV | undefined)[] = [];
@@ -299,12 +353,11 @@ export function decodeStart(prog: Program, module: string, emitted: string, base
         continue;
       }
       const ck = str(ckey!);
-      const n = Number(/_(\d+)$/.exec(ck)![1]);
       const l = lays.get(ck)!;
       const rs = args(cregs!);
       const regs2: (TV | undefined)[] = [];
       l.regs.forEach((r, i) => (regs2[r] = rs[i]));
-      frames.push({ fn, pc: callPc(fn, n) + 1, dm: kd === "d" ? 1 : 0, regs: regs2, D: cD! });
+      frames.push({ fn, pc: ents.callPc(ck) + 1, dm: kd === "d" ? 1 : 0, regs: regs2, D: cD! });
     }
     frames.reverse();
   }
@@ -344,4 +397,18 @@ export function decodeStart(prog: Program, module: string, emitted: string, base
   dec.stderr = str(x[1]!);
   if (str(tag!) === "x") dec.exit = evalType(A!, decls);
   return dec;
+}
+
+/** The pc a block or mid-block entry resumes at. */
+function blockPc(prog: Program, ents: Entries, key: string): number {
+  const m = /^b(\d+)_(\d+)(?:_\d+)?$/.exec(key)!;
+  const fid = Number(m[1]);
+  const f = prog.funcs[fid]!;
+  let pc = 0;
+  for (let b = 0; b < Number(m[2]); b++) pc += f.blocks[b]!.instrs.length;
+  if (ents.at(fid, pc) === key) return pc;
+  // a mid-block entry: search the block's instructions
+  for (let i = 0; i < f.blocks[Number(m[2])]!.instrs.length; i++)
+    if (ents.at(fid, pc + i) === key) return pc + i;
+  throw new Error(`no pc for entry ${key}`);
 }

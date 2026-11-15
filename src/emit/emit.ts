@@ -24,6 +24,27 @@ export interface EmitOptions {
   keep?: Set<string>;
 }
 
+/**
+ * One entry of the emitted module (the sidecar entry table, EMIT.md
+ * "Entries"): where it resumes and how its argument `A` maps to registers.
+ */
+export interface EntryInfo {
+  key: string;
+  fid: number;
+  /** "block": a block's start; "mid": inside a block (a fuel point); "call": a call's return point; "recover": the recover block */
+  kind: "block" | "mid" | "call" | "recover";
+  /** block index (block, mid, recover) or the call's block */
+  block: number;
+  /** flattened instruction index: the next instruction to run (block, mid, recover) or the call / runDefers instruction (call) */
+  pc: number;
+  /** block / mid: register of A[i] (-1 = D); call: register of Regs[i] (A = [result, Regs, D]); recover: register of Regs[i] */
+  regs: number[];
+  /** the entry takes D (A[k] = D for block/mid, A[2] for call) */
+  hasD: boolean;
+  /** call: the result register (-1: none or unused) */
+  dst?: number;
+}
+
 export interface EmitStats {
   funcs: number;
   blocks: number;
@@ -64,8 +85,16 @@ const ARITH_OP = {
 const n2 = (v: number | bigint) => strLit(encNat(v));
 
 /** Emits the program; returns the module text. */
-export function emit(prog: Program, opts: EmitOptions, stats?: EmitStats): string {
-  return new Emitter(prog, opts).run(stats);
+export function emit(
+  prog: Program,
+  opts: EmitOptions,
+  stats?: EmitStats,
+  entries?: EntryInfo[],
+): string {
+  const em = new Emitter(prog, opts);
+  const out = em.run(stats);
+  if (entries) entries.push(...em.entryTable);
+  return out;
 }
 
 interface Seg {
@@ -81,6 +110,7 @@ class Emitter {
   px: string;
   out: string[] = [];
   entries: string[] = []; // `key: iface;`
+  entryTable: EntryInfo[] = [];
   zeroAliases = new Map<number, string>();
   zeroObjAliases = new Map<number, string>();
   methodTabs = new Map<string, Map<number, number>>();
@@ -464,6 +494,8 @@ class FuncEmitter {
   useCount: Map<number, number>;
   segs: Seg[] = [];
   callSite = 0;
+  /** flattened instruction index of each block's first instruction */
+  blockStart: number[] = [];
 
   constructor(e: Emitter, f: Func, fid: number) {
     this.e = e;
@@ -484,6 +516,11 @@ class FuncEmitter {
     }
     this.live = f.body === "ir" ? liveness(f, this.rregs) : { liveIn: [], liveOut: [] };
     this.useCount = new Map();
+    let pc = 0;
+    for (const b of f.blocks) {
+      this.blockStart.push(pc);
+      pc += b.instrs.length;
+    }
     for (const b of f.blocks)
       for (const ins of b.instrs) {
         if (ins.op === "phi") {
@@ -521,7 +558,13 @@ class FuncEmitter {
         const i = this.rregs.indexOf(r);
         return i >= 0 ? `this["a"][1][${i}]` : "null";
       });
-      this.entry(`r${this.fid}`, `b${this.fid}_${f.recover}`, args);
+      this.entry(`r${this.fid}`, `b${this.fid}_${f.recover}`, args, {
+        kind: "recover",
+        block: f.recover,
+        pc: this.blockStart[f.recover]!,
+        regs: this.rregs,
+        hasD: false,
+      });
     }
     for (const s of this.segs)
       this.e.out.push(
@@ -529,7 +572,18 @@ class FuncEmitter {
       );
   }
 
-  entry(key: string, target: string, args: string[]): void {
+  entry(
+    key: string,
+    target: string,
+    args: string[],
+    info: Omit<EntryInfo, "key" | "fid" | "hasD"> & { hasD?: boolean },
+  ): void {
+    this.e.entryTable.push({
+      key,
+      fid: this.fid,
+      ...info,
+      hasD: info.hasD ?? info.regs.includes(D_REG),
+    });
     const h = `this["h"], this["k"], this["x"], this["f"]`;
     this.e.out.push(`interface e${key} extends EB { o: ${target}<${[h, ...args].join(", ")}> }`);
     this.e.entries.push(`${key}: e${key};`);
@@ -579,10 +633,12 @@ class FuncEmitter {
       name,
       yieldA: `[${params.map((r) => this.regName(r)).join(", ")}]`,
       entryArgs: params.map((_, i) => `this["a"][${i}]`),
+      info: { kind: "block", block: bi, pc: this.blockStart[bi]!, regs: params },
     };
     for (let i = 0; i < b.instrs.length; i++) {
       const ins = b.instrs[i]!;
       sb.idx = i;
+      sb.bi = bi;
       if (ins.op === "phi") continue;
       sb.instr(ins, b, bi);
       if (sb.done) break;
@@ -843,6 +899,12 @@ class SegB {
         name: nm,
         yieldA: `[${this.params.join(", ")}]`,
         entryArgs: this.params.map((_, i) => `this["a"][${i}]`),
+        info: {
+          kind: "mid",
+          block: this.bi,
+          pc: this.fe.blockStart[this.bi]! + this.idx,
+          regs: regs,
+        },
       };
       this.Fv = "F2";
     } else this.gSegs++;
@@ -850,7 +912,13 @@ class SegB {
   curName: string | undefined;
   skipNext = false;
   /** The fuel point of the current group (its first segment checks fuel for the group). */
-  fuelPt: { name: string; yieldA: string; entryArgs: string[] | null } | null = null;
+  fuelPt: {
+    name: string;
+    yieldA: string;
+    entryArgs: string[] | null;
+    info?: Omit<EntryInfo, "key" | "fid" | "hasD">;
+  } | null = null;
+  bi = 0;
   gCost = 0;
   gSegs = 1;
 
@@ -883,7 +951,7 @@ class SegB {
     const seg = this.fe.segs.find((s) => s.name === fp.name)!;
     if (seg.body.startsWith(BARE)) seg.body = seg.body.slice(BARE.length, -" : never".length);
     seg.body = `F extends \`${"x".repeat(w)}\${infer F2}\` ? ${seg.body} : R.Y<"${fp.name}", H, K, X, ${fp.yieldA}, "">`;
-    if (fp.entryArgs) this.fe.entry(fp.name, fp.name, fp.entryArgs);
+    if (fp.entryArgs) this.fe.entry(fp.name, fp.name, fp.entryArgs, fp.info!);
     this.fuelPt = null;
     this.gCost = 0;
     this.gSegs = 1;
@@ -961,7 +1029,14 @@ class SegB {
       args.push(`this["a"][1][${i}]`);
       this.env.set(r, { t: fe.regName(r), atom: true });
     });
-    fe.entry(key, key, args);
+    fe.entry(key, key, args, {
+      kind: "call",
+      block: this.bi,
+      pc: fe.blockStart[this.bi]! + this.idx,
+      regs: live,
+      hasD: fe.hasD,
+      dst: dn ? dst! : -1,
+    });
     this.patchGroup();
     this.curName = key;
     this.params = params;

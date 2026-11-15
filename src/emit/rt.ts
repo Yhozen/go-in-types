@@ -146,7 +146,14 @@ type RetC<P extends ProgB, H, C, K, X, F, V> =
               Mk3<I4<C>, [], []>
             >
           : I0<C> extends "q"
-            ? FatalI<P, H, K, XPn<X, PnSet<I2<X>, I5<C>, "5", V>>, F, `${I5<C> & string}x`>
+            ? FatalI<
+                P,
+                H,
+                K,
+                XPn<X, PnSet<I2<X>, I4<PnNth<I2<X>, I5<C>>>, "5", V>>,
+                F,
+                `${I5<C> & string}x`
+              >
             : St<"x", "", H, K, XErr<X, "fatal error: bad continuation\n">, 2, "">;
 
 // ---------------------------------------------------------------- panics and defers

@@ -79,7 +79,9 @@ export function runOne(input: string): RunOut {
     "type Eq_<A, B> = (<G>() => G extends A ? 1 : 2) extends <G>() => G extends B ? 1 : 2 ? true : false;",
   );
   L.push(`export const ok: Eq_<Res, Want> = true;`);
-  if (show) L.push(`export const show: 0 = null as any as [Res, ${last}[0], ${last}[1]];`);
+  L.push(
+    `export const show: 0 = null as any as [[GOut<${last}>, GErr<${last}>, GExit<${last}>], ${last}[0], ${last}[1]];`,
+  );
   writeFileSync(join(dir, "main.ts"), L.join("\n") + "\n");
   const t0 = performance.now();
   const r = spawnSync(
@@ -114,7 +116,10 @@ export function runOne(input: string): RunOut {
   const outText = (r.stdout ?? "") + (r.stderr ?? "");
   writeFileSync(join(dir, "tsrs.out"), outText);
   const inst = Number(outText.match(/^Instantiations:\s+(\d+)/m)?.[1] ?? NaN);
-  const errs = outText.split("\n").filter((l) => /error TS/.test(l));
+  const errs = outText
+    .split("\n")
+    .filter((l) => /error TS/.test(l) && !/main\.ts\(\d+,\d+\): error TS2322: Type '\[\[/.test(l));
+  const shown = outText.match(/error TS2322: Type '(\[\[.*)' is not assignable to type '0'/)?.[1];
   const ok = errs.length === 0 && !Number.isNaN(inst);
   let msg = "";
   if (!ok)

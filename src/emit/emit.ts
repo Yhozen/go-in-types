@@ -590,6 +590,8 @@ class FuncEmitter {
   }
 }
 
+const BARE = "F extends string ? ";
+
 /** Builds one block's segments. */
 class SegB {
   fe: FuncEmitter;
@@ -662,7 +664,7 @@ class SegB {
   /** Binds an expression to a fresh name (cuts first when out of bindings). */
   bind(expr: string): string {
     const nm = this.fresh();
-    this.pre.push(`${expr} extends infer ${nm} ? `);
+    this.pre.push(`${ckParen(expr)} extends infer ${nm} ? `);
     this.post.push(` : never`);
     this.binds++;
     return nm;
@@ -693,7 +695,7 @@ class SegB {
   }
   /** A runtime check: `Ck extends true ? <rest> : <panic from Ck>`. */
   check(ck: string, panic: (r: string) => string) {
-    this.pre.push(`${ck} extends true ? `);
+    this.pre.push(`${ckParen(ck)} extends true ? `);
     this.post.push(` : ${panic(ck)}`);
   }
 
@@ -797,7 +799,10 @@ class SegB {
   /** Records the current segment with the given tail. */
   finishSeg(tail: string): void {
     const nm = this.curName ?? this.name;
-    this.fe.segs.push({ name: nm, params: this.params, body: this.wrapAll(tail) });
+    // A bare alias reference is not a tail call (only conditionals loop):
+    // make it one, or a chain of such segments nests 100 deep.
+    const body = this.pre.length === 0 ? `${BARE}${tail} : never` : this.wrapAll(tail);
+    this.fe.segs.push({ name: nm, params: this.params, body });
     this.e.segCount++;
   }
 
@@ -807,6 +812,7 @@ class SegB {
     if (!fp) return;
     const w = Math.min(MAX_W, Math.max(this.gSegs, Math.ceil(this.gCost / UNIT)));
     const seg = this.fe.segs.find((s) => s.name === fp.name)!;
+    if (seg.body.startsWith(BARE)) seg.body = seg.body.slice(BARE.length, -" : never".length);
     seg.body = `F extends \`${"x".repeat(w)}\${infer F2}\` ? ${seg.body} : R.Y<"${fp.name}", H, K, X, ${fp.yieldA}, "">`;
     if (fp.entryArgs) this.fe.entry(fp.name, fp.name, fp.entryArgs);
     this.fuelPt = null;
@@ -920,7 +926,7 @@ class SegB {
         const c = this.atom(ins.cond);
         const th = this.jumpTo(bi, 0);
         const el = this.jumpTo(bi, 1);
-        return this.end(`${c} extends true ? ${th} : ${el}`);
+        return this.end(`${ckParen(c)} extends true ? ${th} : ${el}`);
       }
       case "return": {
         const rs = ins.results.map((o) => this.val(o).t);
@@ -1630,7 +1636,7 @@ class SegB {
             ti.k === "string" ? `Sr.Lt<${y}, ${acc}>` : `I.Lt<"${e.kindW(t)}", ${y}, ${acc}>`;
           const gt =
             ti.k === "string" ? `Sr.Gt<${y}, ${acc}>` : `I.Gt<"${e.kindW(t)}", ${y}, ${acc}>`;
-          acc = this.atomV(`(${name === "min" ? lt : gt}) extends true ? ${y} : ${acc}`);
+          acc = this.atomV(`${name === "min" ? lt : gt} extends true ? ${y} : ${acc}`);
         }
         return set(acc, { atom: true });
       }
@@ -1809,7 +1815,7 @@ class SegB {
         }
         case "CompareAndSwap": {
           const ok = this.bind(`R.Eq<${old}, ${a(1)}>`);
-          const nv = this.bind(`${ok} extends true ? ${a(2)} : ${old}`);
+          const nv = this.bind(`${ckParen(ok)} extends true ? ${a(2)} : ${old}`);
           this.heapWrite((h) => `Hp.Store1<${h}, ${p}, ${nv}>`);
           return ok;
         }
@@ -1896,4 +1902,9 @@ function readsHeap(ins: Instr, e: Emitter): boolean {
     default:
       return false;
   }
+}
+
+/** A conditional type in a check position needs parentheses. */
+function ckParen(t: string): string {
+  return /\bextends\b/.test(t) ? `(${t})` : t;
 }

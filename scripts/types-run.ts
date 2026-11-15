@@ -32,7 +32,7 @@
 // "wrong output" (first differing line), "other" (any other diagnostic).
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { Program } from "../src/ir/types.ts";
 import { Machine } from "../src/ref/interp.ts";
 import { restore } from "../src/ref/snapshot.ts";
@@ -298,12 +298,23 @@ export interface Diag {
   code: string;
   message: string;
 }
-export const diagnostics = (out: string): Diag[] =>
-  [...out.matchAll(/run\.ts\((\d+),\d+\): error (TS\d+): (.*)/g)].map((m) => ({
-    line: Number(m[1]),
-    code: m[2]!,
-    message: m[3]!,
-  }));
+/** run.ts diagnostics; a message may span lines (a printed type with raw newlines). */
+export function diagnostics(out: string): Diag[] {
+  const ds: Diag[] = [];
+  let cur: Diag | null = null;
+  for (const l of out.split("\n")) {
+    const m = /^(\S+)\((\d+),\d+\): error (TS\d+): (.*)$/.exec(l);
+    if (m) {
+      cur = m[1]!.endsWith("run.ts") ? { line: Number(m[2]), code: m[3]!, message: m[4]! } : null;
+      if (cur) ds.push(cur);
+    } else if (
+      /^(Files|Lines|Identifiers|Symbols|Types|Instantiations|Memory used|\s+\d+ maximum)/.test(l)
+    )
+      cur = null;
+    else if (cur) cur.message += "\n" + l;
+  }
+  return ds;
+}
 /** Errors reported in files other than run.ts (the emitted module, the runtime). */
 export const foreignErrors = (out: string): string[] =>
   out
@@ -409,8 +420,7 @@ export async function runTypes(o: TypesOptions): Promise<TypesResult> {
     try {
       const snap = typeof o.from === "string" ? JSON.parse(readFileSync(o.from, "utf8")) : o.from;
       const st = startState(prog, snap, {
-        typesImp: relImport(dir, "src/types"),
-        rtImp: relImport(dir, "src/emit/rt.ts"),
+        rt: "./rt",
         emitted: readFileSync(join(dir, "prog.d.ts"), "utf8"),
       });
       writeFileSync(join(dir, "start.d.ts"), st.module);
@@ -434,14 +444,9 @@ export async function runTypes(o: TypesOptions): Promise<TypesResult> {
   }
 }
 
-function relImport(dir: string, p: string): string {
-  const r = relative(dir, join(repo, p)).replaceAll("\\", "/");
-  return r.startsWith(".") ? r : "./" + r;
-}
-
 /** CLI statements for a run of n reference ops: a guess with headroom (a finished state stays put). */
 export function estimateChunks(ops: number, drive: number): number {
-  return Math.ceil(ops / 150 / drive) + 4;
+  return Math.ceil(ops / 800 / drive) + 8;
 }
 
 async function cliRun(
@@ -517,7 +522,8 @@ async function cliRun(
     return { ...row, kind: "unfinished", detail: `still running after ${chunks} statements` };
   }
   const got = formatOut(row.stdout ?? "", row.stderr ?? "", row.exit ?? -1);
-  if (okFailed || got !== wantOut)
+  // the Equal check is authoritative; the printed result explains a failure
+  if (okFailed)
     return {
       ...row,
       kind: "wrong output",

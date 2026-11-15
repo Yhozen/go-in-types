@@ -298,7 +298,7 @@ export function encodeHeap(objs: ObjText[], imp: string, name = "Heap"): string 
   out.push(`import type { E0, E1, E2, E3, E4, E5, E6, Mk16, Mk19 } from "${imp}";`);
   if (objs.some((o) => o.text !== undefined))
     out.push(
-      `import type { MapMk5, MapMk6, MapMk16 } from "${imp.replace(/heap\.gen\.ts$/, "map.ts")}";`,
+      `import type { MapMk5, MapMk6, MapMk16 } from "${imp.replace(/heap\.gen(\.d)?\.ts$/, "map$1.ts")}";`,
     );
   out.push(`type Z_ = Mk16<${Array(16).fill("E0").join(", ")}>;`);
   const leafName = (k: number) => `O_${idOf(k)}`;

@@ -115,7 +115,7 @@ for (const name of ["closures", "defer_panic", "maps", "interfaces", "structs_po
     async () => {
       const { emit } = await import("../src/emit/emit.ts");
       const prog = program(name);
-      const emitted = emit(prog, { rt: "../src/emit/rt.ts", types: "../src/types" });
+      const emitted = emit(prog, { rt: "./rt" });
       const lays = entryLayouts(emitted);
       const m0 = new Machine(prog);
       m0.boot();

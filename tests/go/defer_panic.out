@@ -1,0 +1,17 @@
+body 2 1 0 
+42
+ok
+caught: boom
+caught: err value
+caught: myerr 7
+caught: 42
+caught: runtime error: index out of range [3] with length 0
+outer got re-first
+<nil>
+second deferred
+deferred in panicking frame
+ctx: myerr 3 true 3
+deferred before fatal panic
+--- stderr ---
+panic: final 1
+--- exit 2 ---

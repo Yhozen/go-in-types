@@ -1,0 +1,21 @@
+index -> runtime error: index out of range [5] with length 3
+index-neg -> runtime error: index out of range [-1]
+slice -> runtime error: slice bounds out of range [:5] with capacity 3
+slice-inv -> runtime error: slice bounds out of range [2:1]
+slice3 -> runtime error: slice bounds out of range [::5] with capacity 3
+string-index -> runtime error: index out of range [5] with length 3
+string-slice -> runtime error: slice bounds out of range [5:3]
+array -> runtime error: index out of range [5] with length 4
+nil-map -> assignment to entry in nil map
+nil-deref -> runtime error: invalid memory address or nil pointer dereference
+assert -> interface conversion: interface {} is string, not int
+assert-iface -> interface conversion: string is not fmt.Stringer: missing method String
+div -> runtime error: integer divide by zero
+nil-func -> runtime error: invalid memory address or nil pointer dereference
+make-neg -> runtime error: makeslice: len out of range
+custom -> custom 9
+arr-ptr -> runtime error: cannot convert slice with length 3 to array or pointer to array with length 5
+done
+--- stderr ---
+panic: runtime error: invalid memory address or nil pointer dereference
+--- exit 2 ---

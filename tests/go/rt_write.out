@@ -1,0 +1,6 @@
+to stdout
+no newline
+--- no newline ---
+--- stderr ---
+to stderr
+--- exit 3 ---

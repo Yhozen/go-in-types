@@ -1,0 +1,18 @@
+19 Re(2x5)
+true true 3 false
+nil
+integer 1
+integer 2
+string s
+shape sq 4
+error e1
+slice 1
+other
+other
+true false true true
+42 42 d
+42
+42 7
+16
+recovered: interface conversion: interface {} is string, not int
+--- exit 0 ---

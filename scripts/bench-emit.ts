@@ -36,6 +36,10 @@ const CASES: Record<string, [string, string, string?]> = {
   strindex: ['var str = "hello, world, this is a string"', "s += int(str[i&15])"],
   strcat: ["var str string", 'if len(str) > 64 { str = "" }; str += "ab"'],
   defer: ["func d(p *int) { defer func() { *p++ }() }", "d(&s)"],
+  switch: [
+    "",
+    "switch i & 7 {\n\t\tcase 0:\n\t\t\ts++\n\t\tcase 1:\n\t\t\ts += 2\n\t\tcase 2:\n\t\t\ts += 3\n\t\tcase 3:\n\t\t\ts += 4\n\t\tcase 4:\n\t\t\ts += 5\n\t\tcase 5:\n\t\t\ts += 6\n\t\tdefault:\n\t\t\ts--\n\t\t}",
+  ],
 };
 
 const out: string[] = [];

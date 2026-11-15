@@ -55,7 +55,8 @@ export type IntKind =
  */
 export type Type =
   | { k: "bool"; slots: 1 }
-  | { k: "int"; int: IntKind; slots: 1 }
+  /** `name` is set for `int`, `uint`, `uintptr` (distinct types from int64/uint64). */
+  | { k: "int"; int: IntKind; name?: "int" | "uint" | "uintptr"; slots: 1 }
   /** Bit pattern of the float (uint32 or uint64); arithmetic is soft-float. */
   | { k: "float"; bits: 32 | 64; slots: 1 }
   | { k: "string"; slots: 1 }

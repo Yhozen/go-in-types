@@ -452,7 +452,7 @@ class Emitter {
     const trapped =
       f.body === "trap" || (f.body === "ir" && this.o.keep && !this.o.keep.has(f.name));
     if (trapped) {
-      o = `R.Trap<this["h"], this["k"], this["x"], ${strLit(`trap: ${f.trap ?? "trap: " + f.name} (in ${f.name})\n`)}>`;
+      o = `R.Trap<this["h"], this["k"], this["x"], ${strLit(`trap: ${f.trap ?? "not kept (--keep)"} (in ${f.name})\n`)}>`;
     } else if (f.body === "intrinsic") {
       // dynamic call of an intrinsic: run it inline and return
       const args = Array.from({ length: f.params }, (_, i) => `this["a"][1][${i}]`);
@@ -1738,7 +1738,7 @@ class SegB {
       const trapped = g.body === "trap" || (e.o.keep && !e.o.keep.has(g.name));
       if (trapped)
         return this.end(
-          `R.Trap<${this.H}, ${this.K}, ${this.X}, ${strLit(`trap: ${g.trap ?? "trap: " + g.name} (in ${g.name})\n`)}>`,
+          `R.Trap<${this.H}, ${this.K}, ${this.X}, ${strLit(`trap: ${g.trap ?? "not kept (--keep)"} (in ${g.name})\n`)}>`,
         );
       // direct jump into the callee's entry block
       const ge = new FuncEmitterLite(e, g, c.static);

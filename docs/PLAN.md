@@ -44,6 +44,17 @@ beat: the Lua route runs the one-liner from its image in 167k IR ops and
 243M instantiations. If the gate fails, stop and write up a hand-written
 subset checker in types as the alternative.
 
+**Result (2026-11-14): passed.** Heap: candidate A is flat from 0 to 100k
+live objects (read 59, write 413, alloc ~360, pass-on 11–15
+instantiations; HEAP.md). Ops: the warm es5 one-liner is 189,847 SSA
+instructions (1.51× the Lua route's real-Lua count, 1.14× its IR ops), so
+~275M instantiations at the Lua route's per-op cost (estimate); 40% of it
+is option parsing (`strings.ToLower` over option-name maps), which the boot
+image or an overlay should remove (OPS.md). WebAssembly is ~13–15× the SSA
+count on the warm check: ruled out. Census: ~431k SSA instructions of
+code, ~200k executed by the corpus; no goroutines run with
+`--singleThreaded`; reflection is removable with overlays (CENSUS.md).
+
 ## Stage 1: the contract (planner)
 
 `docs/DESIGN.md` and `src/ir/types.ts`: the IR as JSON close to Go's SSA

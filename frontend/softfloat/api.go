@@ -6,6 +6,11 @@
 // end injects both files as GOROOT/src/gointypes/softfloat via the overlay.
 package softfloat
 
+import (
+	"math"
+	"strconv"
+)
+
 // float64 arithmetic.
 
 func Add64(x, y uint64) uint64 { return fadd64(x, y) }
@@ -100,3 +105,16 @@ func Min32(x, y uint32) uint32 { return f64to32(Min64(f32to64(x), f32to64(y))) }
 func Max32(x, y uint32) uint32 { return f64to32(Max64(f32to64(x), f32to64(y))) }
 
 func isNaN64(x uint64) bool { return x&inf64 == inf64 && x&(1<<mantbits64-1) != 0 }
+
+// print and println of floats, and float panic values: Go 1.27's
+// runtime.printfloat64/32 (strconv.AppendFloat 'g' -1) returning the text.
+// The front end lowers each float argument of print/println to a call of
+// these; the emitter calls them to print a float panic value.
+
+func PrintFloat64(v uint64) string {
+	return string(strconv.AppendFloat(nil, math.Float64frombits(v), 'g', -1, 64))
+}
+
+func PrintFloat32(v uint32) string {
+	return string(strconv.AppendFloat(nil, math.Float64frombits(f32to64(v)), 'g', -1, 32))
+}

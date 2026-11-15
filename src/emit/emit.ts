@@ -192,6 +192,9 @@ class Emitter {
     p.funcs.forEach((f, fid) => this.func(f, fid));
 
     // function entries for dynamic calls
+    p.funcs.forEach((f, fid) => {
+      if (/^gointypes\/softfloat\.PrintFloat(32|64)$/.test(f.name)) this.dynFuncs.add(fid);
+    });
     for (const fid of [...this.dynFuncs].sort((a, b) => a - b)) this.funcEntry(fid);
 
     // method tables
@@ -223,6 +226,15 @@ class Emitter {
       if (!seenDyn.has(t)) dyn.push(t);
     }
     const tables = progTables(p, dyn, ifaces, "P");
+    // float panic values print through softfloat.PrintFloat64/32 (Go code)
+    const flt: string[] = [];
+    for (const t of dyn) {
+      const ti = this.info(t);
+      if (ti.k !== "float") continue;
+      const fid = p.funcs.findIndex((f) => f.name === `gointypes/softfloat.PrintFloat${ti.fbits}`);
+      if (fid >= 0) flt.push(`${n2(t)}: ${n2(fid)};`);
+    }
+    if (flt.length) mt.push(`interface Mt_Flt { ${flt.join(" ")} }`);
     // per-type panic print kinds, zero results, recover entries
     const pk: string[] = [];
     for (const t of dyn) pk.push(`${n2(t)}: ${this.printKind(t)};`);
@@ -255,7 +267,7 @@ class Emitter {
       `type PN<H, K, X, F, D, Fid> = R.Pc<H, K, X, F, [${this.ES}, "invalid memory address or nil pointer dereference"], ["", [], D, Fid]>;`,
     );
     tail.push(
-      `interface Prog { e: E; pk: PK; zr: ZR; rc: RC; p: P; mErr: ${this.methodTabs.has("Error") ? "Mt_Error" : "{}"}; mStr: ${this.methodTabs.has("String") ? "Mt_String" : "{}"}; es: ${this.ES}; fuel: ${this.o.fuel ? '"' + "x".repeat(this.o.fuel) + '"' : "R.FUEL"}; }`,
+      `interface Prog { e: E; pk: PK; zr: ZR; rc: RC; p: P; mErr: ${this.methodTabs.has("Error") ? "Mt_Error" : "{}"}; mStr: ${this.methodTabs.has("String") ? "Mt_String" : "{}"}; mFlt: ${flt.length ? "Mt_Flt" : "{}"}; es: ${this.ES}; fuel: ${this.o.fuel ? '"' + "x".repeat(this.o.fuel) + '"' : "R.FUEL"}; }`,
     );
     tail.push(`interface E { ${this.entries.join(" ")} }`);
     const mainCont =

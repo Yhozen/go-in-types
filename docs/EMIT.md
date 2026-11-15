@@ -202,6 +202,13 @@ moves, `A` holding the live values); the default jumps on.
 
 ## Changes
 
+- Fatal panics with a float value call `softfloat.PrintFloat64/32` through
+  a `"q"` continuation, as `Error()`/`String()` (`Prog.mFlt`).
+- Tuples that hold alias references (call arguments, defer records, saved
+  registers, results) are built with `R.TPush`: tsrs defers a tuple
+  literal with such elements (H4), and a deferred tuple kept in K made
+  later steps fail with TS2589 depth (gotest/range4).
+
 - `X` is `Xt<Out, Err, Pn, Ns>` (4 fields; `Ns` the next panic serial);
   panic records carry the serial and the printed text; the `"p"` frame is
   `["", RRegs, D, Fid]`.

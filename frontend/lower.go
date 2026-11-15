@@ -21,7 +21,7 @@ import (
 var instrMapping = [][2]string{
 	{"*ssa.Alloc", "alloc"},
 	{"*ssa.Phi", "phi"},
-	{"*ssa.Call", "call (builtins: call {builtin}; float min/max: soft-float calls; complex/real/imag, unsafe.Add/Slice/String/StringData/SliceData outside the string<->slice patterns, math.Float*bits: changeType; ssa:deferstack: dropped when only its own function's defers use it, else call {builtin: deferstack})"},
+	{"*ssa.Call", "call (builtins: call {builtin}; print/println float arguments: softfloat.PrintFloat64/32 calls first; float min/max: soft-float calls; complex/real/imag, unsafe.Add/Slice/String/StringData/SliceData outside the string<->slice patterns, math.Float*bits: changeType; ssa:deferstack: dropped when only its own function's defers use it, else call {builtin: deferstack})"},
 	{"*ssa.BinOp", "binop (float: soft-float call; complex: trap)"},
 	{"*ssa.UnOp", "* -> load, <- -> recv, - ! ^ -> unop (float -: soft-float call; complex: trap)"},
 	{"*ssa.ChangeType", "changeType"},
@@ -335,6 +335,10 @@ func (l *lowerer) instr(ins ssa.Instruction) {
 		l.emit(IX{Op: "sliceToArrayPtr", Dst: l.dst(v), T: l.t(v), X: l.op(v.X)})
 	case *ssa.MakeInterface:
 		l.fe.noteIface(v.X.Type())
+		if isFloat(v.X.Type()) {
+			// a float panic value is printed by softfloat.PrintFloat* (emitter)
+			l.fe.softfloat("PrintFloat" + strconv.Itoa(floatBits(v.X.Type())))
+		}
 		l.emit(IMakeInterface{Op: "makeInterface", Dst: l.dst(v), T: l.t(v), X: l.op(v.X), XT: l.fe.tt.id(v.X.Type())})
 	case *ssa.MakeClosure:
 		l.emit(IMakeClosure{Op: "makeClosure", Dst: l.dst(v), T: l.t(v), Fn: l.fe.funcID(v.Fn.(*ssa.Function)), Bindings: l.ops(v.Bindings)})
@@ -451,6 +455,24 @@ func (l *lowerer) binop(v *ssa.BinOp) {
 }
 
 // sfCall emits dst = softfloat.name(args...); dst keeps the Go result type.
+// printArgs: print/println arguments, each float formatted first by
+// softfloat.PrintFloat64/32 (runtime.printfloat) into a string register.
+func (l *lowerer) printArgs(args []ssa.Value) []Operand {
+	out := make([]Operand, len(args))
+	for i, a := range args {
+		if !isFloat(a.Type()) {
+			out[i] = l.op(a)
+			continue
+		}
+		str := types.Typ[types.String]
+		r := len(l.regTypes)
+		l.regTypes = append(l.regTypes, l.fe.tt.id(str))
+		l.sfCall("PrintFloat"+strconv.Itoa(floatBits(a.Type())), r, str, l.op(a))
+		out[i] = opReg(r)
+	}
+	return out
+}
+
 func (l *lowerer) sfCall(name string, dst int, t types.Type, args ...Operand) {
 	tid := l.fe.tt.id(t)
 	l.emit(ICall{Op: "call", Dst: ip(dst), T: ip(tid), Callee: Callee{Static: ip(l.fe.softfloat(name))}, Args: args})
@@ -551,6 +573,9 @@ func (l *lowerer) callee(c *ssa.CallCommon) (Callee, []Operand, bool) {
 		name := fn.Name()
 		if name == "ssa:wrapnilchk" {
 			name = "wrapnilchk"
+		}
+		if name == "print" || name == "println" {
+			return Callee{Builtin: name}, l.printArgs(c.Args), true
 		}
 		return Callee{Builtin: name}, l.ops(c.Args), true
 	case *ssa.Function:

@@ -1,5 +1,7 @@
 // go-in-types overlay of internal/jsnum/string.go (typescript-go v7.0.2):
-// Number.String without encoding/json (reflection).
+// Number.String without encoding/json (reflection); its NaN/Infinity and
+// safe-integer tests and tryParseInt's int64 -> Number conversion on bit
+// patterns (identical results, no soft float on the engine).
 
 package jsnum
 
@@ -7,6 +9,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"math/bits"
 	"strconv"
 	"strings"
 	"unicode"
@@ -17,26 +20,74 @@ import (
 
 // https://tc39.es/ecma262/2024/multipage/ecmascript-data-types-and-values.html#sec-numeric-types-number-tostring
 func (n Number) String() string {
-	switch {
-	case n.IsNaN():
-		return "NaN"
-	case n.IsInf():
-		if n < 0 {
+	// go-in-types overlay: the NaN/Infinity tests and the safe-integer fast
+	// path on the bit pattern (the same cases and results as the original's
+	// float comparisons and conversions, which are soft float on the engine).
+	x := math.Float64bits(float64(n))
+	if abs := x &^ (1 << 63); abs >= 0x7FF0000000000000 {
+		if abs > 0x7FF0000000000000 {
+			return "NaN"
+		}
+		if x>>63 != 0 {
 			return "-Infinity"
 		}
 		return "Infinity"
 	}
 
 	// Fast path: for safe integers, directly convert to string.
-	if MinSafeInteger <= n && n <= MaxSafeInteger {
-		if i := int64(n); float64(i) == float64(n) {
-			return strconv.FormatInt(i, 10)
-		}
+	if i, ok := safeIntegerBits(x); ok {
+		return strconv.FormatInt(i, 10)
 	}
 
 	// Otherwise, format as json.Marshal(float64) does (jsonwire.AppendFloat),
 	// without encoding/json and its reflection.
 	return string(appendJSONFloat(nil, float64(n)))
+}
+
+// safeIntegerBits reports whether the finite float with bits x is an
+// integer in [MinSafeInteger, MaxSafeInteger] (±0 included, as 0) and
+// returns it: the original's `MinSafeInteger <= n && n <= MaxSafeInteger`
+// and `float64(int64(n)) == n`, on the bit pattern.
+func safeIntegerBits(x uint64) (int64, bool) {
+	e := int((x>>52)&0x7FF) - 1023
+	if e < 0 {
+		// |n| < 1: an integer only if ±0.
+		return 0, x&^(1<<63) == 0
+	}
+	if e > 52 {
+		// |n| >= 2^53 > MaxSafeInteger.
+		return 0, false
+	}
+	frac := x & (1<<52 - 1)
+	if frac&(1<<(52-e)-1) != 0 {
+		return 0, false
+	}
+	v := int64((frac | 1<<52) >> (52 - e))
+	if x>>63 != 0 {
+		v = -v
+	}
+	return v, true
+}
+
+// int64ToNumber is Number(i), exactly (round to nearest even), with
+// integer operations when |i| < 2^53 (where the conversion is exact).
+func int64ToNumber(i int64) Number {
+	if i == 0 {
+		return 0
+	}
+	u := uint64(i)
+	if i < 0 {
+		u = -u
+	}
+	if u >= 1<<53 {
+		return Number(i)
+	}
+	e := bits.Len64(u) - 1
+	b := uint64(1023+e)<<52 | (u<<(52-e))&(1<<52-1)
+	if i < 0 {
+		b |= 1 << 63
+	}
+	return Number(math.Float64frombits(b))
 }
 
 // appendJSONFloat is jsonwire.AppendFloat for 64-bit floats.
@@ -178,7 +229,7 @@ func tryParseInt(s string) (Number, bool) {
 	}
 
 	if hasIntResult && err == nil {
-		return Number(i), true
+		return int64ToNumber(i), true
 	}
 
 	// Using this to parse large integers.

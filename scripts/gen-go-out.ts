@@ -2,7 +2,7 @@
 //   node scripts/gen-go-out.ts [--check] [--real] [filter...]
 // Each program is built with `GOARCH=amd64 go build -overlay overlay/tests.json`
 // (amd64 under Rosetta on Apple silicon: no fused multiply-add, the same
-// target the front end loads) and run with a 20 s timeout.
+// target the front end loads) and run with a 60 s timeout.
 //   --check  compare with the existing .out files instead of writing them
 //   --real   also build without the overlay (real fmt, real sync, ...) and
 //            report programs whose output differs: a parity check of the
@@ -68,7 +68,7 @@ export async function native(file: string, overlay: string | null): Promise<Nati
   try {
     const r = await run(bin, [], {
       encoding: "latin1",
-      timeout: 20_000,
+      timeout: 60_000,
       maxBuffer: 64 << 20,
       cwd: dirname(src),
     });

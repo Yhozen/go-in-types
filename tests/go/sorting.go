@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,7 +26,7 @@ func main() {
 		fmt.Print(p.name, ":", p.age, " ")
 	}
 	fmt.Println()
-	sort.SliceStable(people, func(i, j int) bool { return people[i].name > people[j].name })
+	slices.SortStableFunc(people, func(a, b person) int { return strings.Compare(b.name, a.name) })
 	fmt.Println(people[0].name, people[3].name)
 	xs := make([]int, 0)
 	seed := uint32(12345)

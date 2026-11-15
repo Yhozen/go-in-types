@@ -43,7 +43,12 @@ and pure-Go `math`; the engine runs the same Go code.
   non-string types** (e.g. `type MyInt int`) print as
   `%!v(unsupported type)`; convert or print fields. `%T` knows predeclared
   and those composite types only. `errors.As` only fills `*error` targets
-  (use `errors.AsType`).
+  (use `errors.AsType`). `sort.Slice`/`sort.SliceStable` need reflection
+  (`reflectlite.Swapper`): use `slices.SortFunc`/`SortStableFunc`.
+- The front end must load with `-tags purego,gointypes`: the `gointypes` tag
+  selects `overlay/std/gointypes/rt/rt_engine.go` (bodyless intrinsics)
+  instead of the os-backed native `rt_os.go`, so programs do not pull in
+  `os` and its initializers.
 - `node scripts/gen-go-out.ts --real` also runs every hand-written program
   without the overlay and reports differences (fmt parity check).
 

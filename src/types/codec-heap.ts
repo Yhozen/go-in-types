@@ -84,12 +84,23 @@ export interface ValueHook {
   /** an evaluated heap object of this kind and its type -> snapshot object */
   decObject?: (o: any, t: number, d: Dec) => any;
 }
-/** Hooks for maps, channels and range iterators; codec-map fills `map`, codec-state `iter`. */
-export const codecHooks: { map?: ValueHook; chan?: ValueHook; iter?: ValueHook } = {};
-function iterHook(): ValueHook {
-  const h = codecHooks.iter;
-  if (!h?.encSnap || !h.dec) throw new Error("codec-heap: no codec for range iterators");
-  return h;
+/** Hooks for maps and channels; codec-map fills `map`. */
+export const codecHooks: { map?: ValueHook; chan?: ValueHook } = {};
+
+/**
+ * Range iterators (docs/EMIT.md "Registers"): a map iterator { mi, q } (q:
+ * the seq of the last entry visited) is `[M, It]` with It = q + 1 (the next
+ * Seq to look at, map.ts); a string iterator { si, q } is `[S, Pos]`.
+ */
+export function encIter(v: any): string {
+  if ("mi" in v) return `[${v.mi === null ? "null" : lit(snapId(v.mi))}, ${lit(encNat(v.q + 1))}]`;
+  return `[${lit(v.si)}, ${lit(encNat(v.q))}]`;
+}
+/** An evaluated iterator back to snapshot form; `src` is the ranged operand's type. */
+export function decIter(ti: TypeInfo, v: any, src: number): any {
+  if (ti.kind(src) === "map")
+    return { mi: v[0] === null ? null : idNum(v[0]), q: Number(decNat(v[1])) - 1 };
+  return { si: v[0], q: Number(decNat(v[1])) };
 }
 function hook(kind: "map" | "chan"): ValueHook {
   const h = codecHooks[kind];
@@ -530,7 +541,7 @@ export class Dec {
         return v;
       case "pointer":
       case "opaque":
-        if (ti.isIter(t)) return iterHook().dec!(v, t, this);
+        if (ti.isIter(t)) throw new Error("codec-heap: decode iterators with decIter");
         return v === null ? null : { p: this.obj(v[0]), i: Number(decNat(v[1])) };
       case "slice":
         return v === null
@@ -676,7 +687,7 @@ export function encSnapValue(ti: TypeInfo, v: any, t: number): string {
       return lit(v);
     case "pointer":
     case "opaque":
-      if (v !== null && ("mi" in v || "si" in v)) return iterHook().encSnap!(v, t, ti);
+      if (v !== null && ("mi" in v || "si" in v)) return encIter(v);
       return v === null ? "null" : `[${lit(snapId(v.p))}, ${lit(encNat(v.i))}]`;
     case "slice":
       return v === null
@@ -749,9 +760,11 @@ export function typesToSnapshot(prog: Program, st: TypesState, base: any): any {
   const dec = new Dec(ti);
   const frames = base.frames.map((fr: any, k: number) => {
     const rt = prog.funcs[fr.fn]!.regTypes;
+    const its = ti.iterSources(fr.fn);
     const regs = st.frames[k]!.map((txt, i) => {
       const v = evalType(new Parser(txt, 0).expr(), decls);
-      return v === undefined ? { u: 1 } : dec.value(v, rt[i]!);
+      if (v === undefined) return { u: 1 };
+      return its.has(i) && ti.isIter(rt[i]!) ? decIter(ti, v, its.get(i)!) : dec.value(v, rt[i]!);
     });
     return { ...fr, r: regs };
   });

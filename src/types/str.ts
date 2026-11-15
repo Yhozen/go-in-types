@@ -162,7 +162,25 @@ type UInc<U extends string, O extends string = ""> = U extends `${infer x}${infe
   : `${O}1`;
 
 /** `len(s)`: the number of bytes (memoized per string). */
-export type Len<S extends string> = Cnt16<S, "0", "">;
+export type Len<S extends string> = Len8<S, "0", S>;
+/** 8 chars per step for strings under 128 bytes (M: the count of 8s so far), then the general count. */
+type Len8<S extends string, M extends string, S0 extends string> = M extends "g"
+  ? Cnt16<S0, "0", "">
+  : S extends `${infer _0}${infer _1}${infer _2}${infer _3}${infer _4}${infer _5}${infer _6}${infer _7}${infer R}`
+    ? Len8<R, K.SUCCG[M], S0>
+    : S extends `${infer _0}${infer _1}${infer _2}${infer _3}${infer R}`
+      ? Len2<R, M, "4">
+      : Len2<S, M, "0">;
+type Len2<
+  S extends string,
+  M extends string,
+  A extends string,
+> = S extends `${infer _0}${infer _1}${infer R}`
+  ? Len1<R, M, A extends "4" ? "6" : "2">
+  : Len1<S, M, A>;
+type Len1<S extends string, M extends string, A extends string> = S extends `${string}${infer _}`
+  ? K.LEN8[`${M}${K.SUCC8[A]}`]
+  : K.LEN8[`${M}${A}`];
 
 // ---------------------------------------------------------------- the index
 

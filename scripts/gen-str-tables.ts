@@ -115,6 +115,27 @@ export function strTablesSource(): string {
       true,
     ),
     table(
+      "LEN8",
+      "8 m + r -> its integer (m a nibble, r 0..7).",
+      Array.from({ length: 128 }, (_, i): [string, string] => [
+        HEX[i >> 3]! + String(i & 7),
+        q(encInt(i)),
+      ]),
+      true,
+    ),
+    table(
+      "SUCCG",
+      'A nibble -> the next ("f" -> "g").',
+      HEX.map((h, i): [string, string] => [h, q(i === 15 ? "g" : HEX[i + 1]!)]),
+      true,
+    ),
+    table(
+      "SUCC8",
+      "r -> r + 1 (0..6).",
+      Array.from({ length: 7 }, (_, i): [string, string] => [String(i), q(String(i + 1))]),
+      true,
+    ),
+    table(
       "NEXT2",
       'An offset in a block (two nibbles, least significant first) -> the next one; "ff" -> "t" (the block\'s end).',
       N256.map((c) => [nib2(c), q(c === 255 ? "t" : nib2(c + 1))]),

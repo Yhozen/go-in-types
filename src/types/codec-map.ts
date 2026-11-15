@@ -108,7 +108,7 @@ export function mapStateToType(
     let b = buckets.get(p);
     if (!b) buckets.set(p, (b = []));
     b.push(ent.join(", "));
-    put(ord, seqPath(e.seq, d), strToType(c));
+    put(ord, seqPath(e.seq, d), strToType(p + c));
   }
   const idx: Trie = new Map();
   for (const [p, b] of buckets) {

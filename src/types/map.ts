@@ -17,7 +17,8 @@
 //   leaves are buckets. A bucket is a chain of entries `[C, K, V, Seq, Next]`
 //   (Mk5) in insertion order; Next is the next entry or undefined.
 // - D, Root: the order trie, depth D ("1".."6"), keyed by an entry's Seq (its
-//   D low nibbles, most significant first); leaves hold C.
+//   D low nibbles, most significant first); leaves hold `${path}${C}` (the
+//   entry's index path, so `next` finds it without hashing).
 // - Empty subtrees, buckets and order leaves are `undefined`, and a node
 //   whose children are all undefined is itself undefined, so the state is a
 //   function of the reference map's contents (the codec's bijection).
@@ -292,7 +293,7 @@ type MsInsD<MS, P extends string, B2, C extends string, Seq extends string, D, R
   F2<MS>,
   TPutP<F3<MS>, P, B2>,
   D,
-  TPutP<Root, SeqPath<D, Seq>, C>
+  TPutP<Root, SeqPath<D, Seq>, `${P}${C}`>
 >;
 
 /** `delete(m, k)`. */
@@ -329,10 +330,14 @@ export type MsNext<MS, It extends string, ZK, ZV> =
     : Mk4<false, ZK, ZV, It>;
 type MsNextAt4<MS, It extends string, ZK, ZV, P extends string> =
   TGetP<F5<MS>, P> extends infer C extends string
-    ? MsNextE<MsGet<MS, C>, NInc<It>>
+    ? MsNextE<OrdGet<MS, C>, NInc<It>>
     : Succ<F5<MS>, P> extends infer Q extends string
-      ? MsNextE<MsGet<MS, TGetP<F5<MS>, Q> & string>, NInc<NTrim<Rev<Q>>>>
+      ? MsNextE<OrdGet<MS, TGetP<F5<MS>, Q>>, NInc<NTrim<Rev<Q>>>>
       : Mk4<false, ZK, ZV, It>;
+/** The entry of an order-trie leaf (its index path then its canonical key: no hashing). */
+type OrdGet<MS, L> = L extends `${infer a}${infer b}${infer c}${infer d}${infer C}`
+  ? BGet<TGetP<F3<MS>, `${a}${b}${c}${d}`>, C>
+  : never;
 type MsNextE<E, It2> = Mk4<true, F1<E>, F2<E>, It2>;
 /** The next live entry at or after It and the iterator state after it: [entry, It2], or false. */
 type MsNextX<MS, It extends string> =
@@ -343,9 +348,9 @@ type MsNextX<MS, It extends string> =
     : false;
 type MsNextAt<MS, It extends string, P extends string> =
   TGetP<F5<MS>, P> extends infer C extends string
-    ? Mk2<MsGet<MS, C>, NInc<It>>
+    ? Mk2<OrdGet<MS, C>, NInc<It>>
     : Succ<F5<MS>, P> extends infer Q extends string
-      ? Mk2<MsGet<MS, TGetP<F5<MS>, Q> & string>, NInc<NTrim<Rev<Q>>>>
+      ? Mk2<OrdGet<MS, TGetP<F5<MS>, Q>>, NInc<NTrim<Rev<Q>>>>
       : false;
 
 /** The state of a map with the entries of MS in iteration order, renumbered from 0 (maps.clone). */

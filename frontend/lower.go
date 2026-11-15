@@ -69,7 +69,7 @@ type lowerer struct {
 }
 
 func (fe *frontend) lowerBody(f *ssa.Function, out *Func) {
-	l := &lowerer{fe: fe, f: f, regs: map[ssa.Value]int{}, subst: map[ssa.Value]Operand{}}
+	l := &lowerer{fe: fe, f: f, regs: map[ssa.Value]int{}, subst: map[ssa.Value]Operand{}, regTypes: []int{}}
 	for _, p := range f.Params {
 		l.newReg(p)
 	}
@@ -147,6 +147,13 @@ func (l *lowerer) prepass() {
 				continue
 			}
 			switch bi.Name() {
+			case "Sizeof", "Alignof":
+				t := c.Call.Args[0].Type()
+				n := l.fe.sizes.Sizeof(t)
+				if bi.Name() == "Alignof" {
+					n = l.fe.sizes.Alignof(t)
+				}
+				l.subst[c] = opInt(n, l.fe.tt.id(c.Type()))
 			case "ssa:deferstack":
 				l.subst[c] = opZero(l.fe.tt.id(c.Type()))
 			case "SliceData", "StringData":

@@ -788,12 +788,12 @@ class SegB {
 
   /**
    * Extra weight of ops that build or walk aggregate values: about
-   * n (40 + 4 n) for n slots (heap.ts LoadK grows its tuple one slot at a
-   * time; a 1000-slot load costs ~4M instantiations).
+   * n (40 + 4 n) for n < 32 slots (heap.ts LoadK/StoreK slot by slot), and
+   * 70 n past that (the bulk paths: whole leaves and subtrees).
    */
   aggCost(ins: Instr): number {
     const sl = (t: number) => (t >= 0 && this.e.info(t).agg ? this.e.info(t).slots : 0);
-    const w = (n: number) => n * (40 + 4 * n);
+    const w = (n: number) => (n < 32 ? n * (40 + 4 * n) : 300 + 70 * n);
     switch (ins.op) {
       case "load":
       case "lookup":

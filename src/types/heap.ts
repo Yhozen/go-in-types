@@ -72,11 +72,11 @@
 // Costs (stock tsrs, instantiations, flat from 0 to 100k live objects;
 // scripts/cost-heap.ts): Load1 76, Store1 446, Alloc 377, pass-on 11, lazy
 // slot read 114 / write 644, append in place 934, makeSlice 487, copy of 4
-// slots 1511. Limits: the heap holds 16^W objects; a lazy object 16^6
-// slots; loops restart every 256 steps outside tail position (depth limit:
-// ~25k steps per op), but `LoadK`/`StoreK` build or consume a register
-// tuple and are quadratic past ~1000 slots: copy big arrays heap to heap
-// (`Copy`-style), not through registers.
+// slots 1511; `LoadK`/`StoreK` of 1000 slots of a lazy object ~10k / ~70k
+// (linear: whole subtrees and leaves at once). Limits: the heap holds 16^W
+// objects; a lazy object 16^6 slots; loops restart every 256 steps outside
+// tail position (depth limit: ~25k steps per op); a bulk store of more than
+// 4096 slots goes slot by slot (quadratic).
 import type {
   Ch,
   E0,
@@ -85,6 +85,8 @@ import type {
   ERoot,
   Id0,
   IncId,
+  IncD,
+  DecNib,
   IxS,
   SetS,
   LPath,
@@ -216,7 +218,7 @@ type Load1O<O, S extends string, Z0> = O["length" & keyof O] extends 19
   ? Dflt<LGet<O, LPath<S, O["16" & keyof O]>>, Z0>
   : O[IxS[S & keyof IxS] & keyof O];
 /** *P for an aggregate type with zero slots Z (a tuple; result has as many slots). */
-export type LoadK<H, P, Z> = LoadKI<GetObj<H, P["0" & keyof P]>, P["1" & keyof P] & string, Z, []>;
+export type LoadK<H, P, Z> = LoadKO<GetObj<H, P["0" & keyof P]>, P["1" & keyof P] & string, Z>;
 type LoadKI<O, S extends string, Z, Acc, F extends 0[] = []> = Z extends [infer z, ...infer ZR]
   ? F["length"] extends Fuel
     ? Restart<LoadKI<O, S, Z, Acc>>
@@ -227,12 +229,251 @@ export type Store1<H, P, V> = StoreAt<H, P["0" & keyof P], P["1" & keyof P] & st
 type StoreAt<H, Id, S extends string, V> = PutObj<H, Id, OSet<GetObj<H, Id>, S, V>>;
 /** *P = V for an aggregate (V a tuple of its slots). */
 export type StoreK<H, P, V> = StoreKAt<H, P["0" & keyof P], P["1" & keyof P] & string, V>;
-type StoreKAt<H, Id, S extends string, V> = PutObj<H, Id, StoreKI<GetObj<H, Id>, S, V>>;
+type StoreKAt<H, Id, S extends string, V> = PutObj<H, Id, StoreKO<GetObj<H, Id>, S, V>>;
 type StoreKI<O, S extends string, V, F extends 0[] = []> = V extends [infer x, ...infer R]
   ? F["length"] extends Fuel
     ? Restart<StoreKI<O, S, V>>
     : StoreKI<OSet<O, S, x>, Inc<S>, R, [...F, 0]>
   : O;
+
+// Bulk loads and stores of big aggregates in lazy objects. A load reads
+// the slot range as whole subtrees (`ReadAll` concatenates 16 children at
+// once) and fills unwritten slots from Z in one mapped pass; a store writes
+// whole 16-slot leaves where aligned, reading V by index (never peeling it:
+// a rest pattern on an n-tuple costs O(n) per step). 1000 slots: load
+// ~10k instantiations (was 1.1M at top level, 4.1M inside a segment), store
+// ~70k (was 1.9M).
+type Cat3<A extends unknown[], B extends unknown[], C extends unknown[]> = [...A, ...B, ...C];
+type Cat16<
+  A0 extends unknown[],
+  A1 extends unknown[],
+  A2 extends unknown[],
+  A3 extends unknown[],
+  A4 extends unknown[],
+  A5 extends unknown[],
+  A6 extends unknown[],
+  A7 extends unknown[],
+  A8 extends unknown[],
+  A9 extends unknown[],
+  A10 extends unknown[],
+  A11 extends unknown[],
+  A12 extends unknown[],
+  A13 extends unknown[],
+  A14 extends unknown[],
+  A15 extends unknown[],
+> = [
+  ...A0,
+  ...A1,
+  ...A2,
+  ...A3,
+  ...A4,
+  ...A5,
+  ...A6,
+  ...A7,
+  ...A8,
+  ...A9,
+  ...A10,
+  ...A11,
+  ...A12,
+  ...A13,
+  ...A14,
+  ...A15,
+];
+type Fs<S> = S extends `${string}${infer R}` ? `f${Fs<R>}` : "";
+type Zs<S> = S extends `${string}${infer R}` ? `0${Zs<R>}` : "";
+/** The slots of the subtree N whose paths have the length of P, in order. */
+type ReadAll<N, P> = P extends `${string}${infer R}`
+  ? R extends ""
+    ? N["length" & keyof N] extends 16
+      ? N
+      : NodeOfRoot<N>
+    : Cat16<
+        ReadAll<N["0" & keyof N], R>,
+        ReadAll<N["1" & keyof N], R>,
+        ReadAll<N["2" & keyof N], R>,
+        ReadAll<N["3" & keyof N], R>,
+        ReadAll<N["4" & keyof N], R>,
+        ReadAll<N["5" & keyof N], R>,
+        ReadAll<N["6" & keyof N], R>,
+        ReadAll<N["7" & keyof N], R>,
+        ReadAll<N["8" & keyof N], R>,
+        ReadAll<N["9" & keyof N], R>,
+        ReadAll<N["10" & keyof N], R>,
+        ReadAll<N["11" & keyof N], R>,
+        ReadAll<N["12" & keyof N], R>,
+        ReadAll<N["13" & keyof N], R>,
+        ReadAll<N["14" & keyof N], R>,
+        ReadAll<N["15" & keyof N], R>
+      >
+  : [];
+type Has<M, d extends string> = M extends `${string}${d}${string}` ? true : false;
+type Between<
+  a extends string,
+  b extends string,
+> = "0123456789abcdef" extends `${string}${a}${infer M}${b}${string}` ? M : "";
+type Mid<N, M, R> = Cat16<
+  Has<M, "0"> extends true ? ReadAll<N["0" & keyof N], R> : [],
+  Has<M, "1"> extends true ? ReadAll<N["1" & keyof N], R> : [],
+  Has<M, "2"> extends true ? ReadAll<N["2" & keyof N], R> : [],
+  Has<M, "3"> extends true ? ReadAll<N["3" & keyof N], R> : [],
+  Has<M, "4"> extends true ? ReadAll<N["4" & keyof N], R> : [],
+  Has<M, "5"> extends true ? ReadAll<N["5" & keyof N], R> : [],
+  Has<M, "6"> extends true ? ReadAll<N["6" & keyof N], R> : [],
+  Has<M, "7"> extends true ? ReadAll<N["7" & keyof N], R> : [],
+  Has<M, "8"> extends true ? ReadAll<N["8" & keyof N], R> : [],
+  Has<M, "9"> extends true ? ReadAll<N["9" & keyof N], R> : [],
+  Has<M, "a"> extends true ? ReadAll<N["10" & keyof N], R> : [],
+  Has<M, "b"> extends true ? ReadAll<N["11" & keyof N], R> : [],
+  Has<M, "c"> extends true ? ReadAll<N["12" & keyof N], R> : [],
+  Has<M, "d"> extends true ? ReadAll<N["13" & keyof N], R> : [],
+  Has<M, "e"> extends true ? ReadAll<N["14" & keyof N], R> : [],
+  Has<M, "f"> extends true ? ReadAll<N["15" & keyof N], R> : []
+>;
+/** The slots Lp..Hp (paths of equal length, MSB first) of subtree N. */
+type RangeR<N, Lp, Hp> =
+  Lp extends Zs<Lp> ? (Hp extends Fs<Hp> ? ReadAll<N, Lp> : RangeP<N, Lp, Hp>) : RangeP<N, Lp, Hp>;
+type RangeP<N, Lp, Hp> = Lp extends `${infer a}${infer LR}`
+  ? Hp extends `${infer b}${infer HR}`
+    ? LR extends ""
+      ? SliceL<N, a, b, []>
+      : a extends b
+        ? RangeR<Ch<N, a>, LR, HR>
+        : Cat3<
+            RangeR<Ch<N, a>, LR, Fs<LR>>,
+            Mid<N, Between<a, b>, LR>,
+            RangeR<Ch<N, b>, Zs<HR>, HR>
+          >
+    : never
+  : never;
+type SliceL<N, a, b, Acc> = a extends b
+  ? Push<Acc, Ch<N, a>>
+  : SliceL<N, IncD[a & keyof IncD], b, Push<Acc, Ch<N, a>>>;
+type MapDflt<R, Z> = {
+  [K in keyof R]: [R[K]] extends [undefined] ? (K extends keyof Z ? Z[K] : never) : R[K];
+};
+type FixZ<R, Z> = undefined extends R[number & keyof R] ? MapDflt<R, Z> : R;
+type LoadKO<O, S extends string, Z> = O["length" & keyof O] extends 19
+  ? Z["length" & keyof Z] extends Small
+    ? LoadKI<O, S, Z, []>
+    : LoadL<O, O["16" & keyof O], S, Add<S, Dec<TLen<Z>>>, Z>
+  : LoadKI<O, S, Z, []>;
+/** Aggregates up to this many slots go slot by slot (cheaper than the bulk paths). */
+type Small =
+  | 0
+  | 1
+  | 2
+  | 3
+  | 4
+  | 5
+  | 6
+  | 7
+  | 8
+  | 9
+  | 10
+  | 11
+  | 12
+  | 13
+  | 14
+  | 15
+  | 16
+  | 17
+  | 18
+  | 19
+  | 20
+  | 21
+  | 22
+  | 23
+  | 24
+  | 25
+  | 26
+  | 27
+  | 28
+  | 29
+  | 30
+  | 31;
+/** A tuple's length as an int. */
+type TLen<T> = `${T["length" & keyof T] & number}` extends infer L extends string
+  ? string extends DecNib[L & keyof DecNib]
+    ? DecInt<L, "0">
+    : DecNib[L & keyof DecNib]
+  : never;
+type DecInt<S, Acc extends string> = S extends `${infer d extends keyof DecDig}${infer R}`
+  ? DecInt<R, Add<Mul<Acc, "a0">, DecDig[d]>>
+  : Acc;
+interface DecDig {
+  "0": "0";
+  "1": "1";
+  "2": "2";
+  "3": "3";
+  "4": "4";
+  "5": "5";
+  "6": "6";
+  "7": "7";
+  "8": "80";
+  "9": "90";
+}
+type LoadL<O, D, S extends string, E extends string, Z> = FixZ<
+  RangeR<O, LPath<S, D>, LPath<E, D>>,
+  Z
+>;
+
+type StoreKO<O, S extends string, V> = O["length" & keyof O] extends 19
+  ? V["length" & keyof V] extends Small
+    ? StoreKI<O, S, V>
+    : O["16" & keyof O] extends "1"
+      ? StoreKI<O, S, V>
+      : StoreL<O, O["16" & keyof O], S, V>
+  : StoreKI<O, S, V>;
+type StoreL<O, D, S extends string, V> =
+  TLen<V> extends infer N extends string
+    ? Le<N, "0001"> extends true
+      ? StoreLI<O, D, S, V, "0", N>
+      : StoreKI<O, S, V>
+    : never;
+/** Slots S.. := V[J..], N slots left (ints); leaf by leaf where aligned. */
+type StoreLI<
+  O,
+  D,
+  S extends string,
+  V,
+  J extends string,
+  N extends string,
+  F extends 0[] = [],
+> = N extends "0"
+  ? O
+  : F["length"] extends Fuel
+    ? Restart<StoreLI<O, D, S, V, J, N>>
+    : S extends "0" | `0${string}`
+      ? Lt<"f", N> extends true
+        ? StoreLI<
+            LSetLeaf<O, LPath<S, D>, Leaf16V<V, J, []>>,
+            D,
+            Add<S, "01">,
+            V,
+            Add<J, "01">,
+            Sub<N, "01">,
+            [...F, 0]
+          >
+        : StoreLI<LSet<O, LPath<S, D>, VAt<V, J>>, D, Inc<S>, V, Inc<J>, Dec<N>, [...F, 0]>
+      : StoreLI<LSet<O, LPath<S, D>, VAt<V, J>>, D, Inc<S>, V, Inc<J>, Dec<N>, [...F, 0]>;
+/** V[J] for an int J (H3 lookup). */
+type VAt<V, J extends string> = NibDec[J] extends infer K
+  ? K extends keyof V
+    ? V[K]
+    : never
+  : never;
+type Leaf16V<V, J extends string, Acc extends unknown[]> = Acc["length"] extends 16
+  ? Acc
+  : Leaf16V<V, Inc<J>, [...Acc, VAt<V, J>]>;
+/** O (a lazy root of depth >= 2) with the leaf holding path P replaced by L. */
+type LSetLeaf<O, P, L> = P extends `${infer d}${infer R}`
+  ? SetR<O, d, LSetLeafN<Ch<O, d>, R, L>>
+  : never;
+type LSetLeafN<N, P, L> = P extends `${infer d}${infer R}`
+  ? R extends ""
+    ? L
+    : SetC<N, d, LSetLeafN<Ch<N, d>, R, L>>
+  : never;
 
 // Loops: a chain of tail calls is capped at ~1000 steps, so every loop
 // counts Fuel steps and then restarts outside tail position (one level of
@@ -401,25 +642,46 @@ type Slice3<
 type CopyIn<H, DstId, DstOff extends string, Src, Cnt extends string, Ze> = Cnt extends "0"
   ? H
   : Src extends ["h", infer SId, infer SOff extends string]
-    ? [SId] extends [DstId]
-      ? Lt<SOff, DstOff> extends true
-        ? PutObj<
-            H,
-            DstId,
-            CopyBack<
-              GetObj<H, DstId>,
-              Add<SOff, Dec<Cnt>>,
-              Add<DstOff, Dec<Cnt>>,
-              Cnt,
-              RevT<Ze>,
-              RevT<Ze>
-            >
-          >
-        : PutObj<H, DstId, CopySame<GetObj<H, DstId>, SOff, DstOff, Cnt, Ze, Ze>>
-      : PutObj<H, DstId, CopyOther<GetObj<H, DstId>, GetObj<H, SId>, SOff, DstOff, Cnt, Ze, Ze>>
+    ? CopyBulk<GetObj<H, DstId>, GetObj<H, SId>, Cnt> extends true
+      ? PutObj<H, DstId, CopyRaw<GetObj<H, DstId>, GetObj<H, SId>, SOff, DstOff, Cnt>>
+      : CopyInH<H, DstId, DstOff, SId, SOff, Cnt, Ze>
     : Src extends ["v", infer T]
-      ? PutObj<H, DstId, CopyVals<GetObj<H, DstId>, T, DstOff, Ze, Ze>>
+      ? PutObj<H, DstId, StoreKO<GetObj<H, DstId>, DstOff, T>>
       : never;
+/** Whether a heap copy goes in bulk: both objects lazy, 32 slots or more. */
+type CopyBulk<O, Src, Cnt extends string> = O["length" & keyof O] extends 19
+  ? Src["length" & keyof Src] extends 19
+    ? Le<"02", Cnt>
+    : false
+  : false;
+/**
+ * Bulk copy: the source range read raw (unwritten slots stay unwritten:
+ * memory is typed, so both objects share the zero pattern), then stored;
+ * reading first makes it a memmove.
+ */
+type CopyRaw<O, Src, SOff extends string, DOff extends string, Cnt extends string> = StoreKO<
+  O,
+  DOff,
+  RangeR<Src, LPath<SOff, Src["16" & keyof Src]>, LPath<Add<SOff, Dec<Cnt>>, Src["16" & keyof Src]>>
+>;
+type CopyInH<H, DstId, DstOff extends string, SId, SOff extends string, Cnt extends string, Ze> = [
+  SId,
+] extends [DstId]
+  ? Lt<SOff, DstOff> extends true
+    ? PutObj<
+        H,
+        DstId,
+        CopyBack<
+          GetObj<H, DstId>,
+          Add<SOff, Dec<Cnt>>,
+          Add<DstOff, Dec<Cnt>>,
+          Cnt,
+          RevT<Ze>,
+          RevT<Ze>
+        >
+      >
+    : PutObj<H, DstId, CopySame<GetObj<H, DstId>, SOff, DstOff, Cnt, Ze, Ze>>
+  : PutObj<H, DstId, CopyOther<GetObj<H, DstId>, GetObj<H, SId>, SOff, DstOff, Cnt, Ze, Ze>>;
 type RevT<T, O extends unknown[] = []> = T extends [infer x, ...infer R] ? RevT<R, [x, ...O]> : O;
 
 type CopySame<
@@ -470,14 +732,6 @@ type CopyBack<
       ? CopyBack<OSet<O, D, Dflt<OGet<O, S>, z>>, DecZ<S>, DecZ<D>, Dec<N>, ZR, Ze, [...F, 0]>
       : CopyBack<O, S, D, N, Ze, Ze, F>;
 type DecZ<S extends string> = S extends "0" ? "0" : Dec<S>;
-type CopyVals<O, T, D extends string, Zc, Ze, F extends 0[] = []> = T extends [infer x, ...infer R]
-  ? F["length"] extends Fuel
-    ? Restart<CopyVals<O, T, D, Zc, Ze>>
-    : Zc extends [infer z, ...infer ZR]
-      ? CopyVals<OSet<O, D, Dflt<x, z>>, R, Inc<D>, ZR, Ze, [...F, 0]>
-      : CopyVals<O, T, D, Ze, Ze, F>
-  : O;
-
 /** The count copy(dst, src) returns. */
 export type CopyN<Dst, Src> = Min<Len<Dst> & string, Len<Src> & string>;
 /** The heap after copy(dst, src) of slices; Es element slots, Ze element zero. */

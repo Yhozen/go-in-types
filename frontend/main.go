@@ -466,7 +466,13 @@ func (fe *frontend) addDispatch() bool {
 func (fe *frontend) fillMethods() {
 	for i := 0; i < len(fe.tt.named); i++ { // list may grow while filling
 		e := fe.tt.named[i]
-		nt := fe.tt.list[e.id].(TNamed)
+		var methods, ptrMethods map[string]int
+		switch nt := fe.tt.list[e.id].(type) {
+		case TNamed:
+			methods, ptrMethods = nt.Methods, nt.PtrMethods
+		case TStruct:
+			methods, ptrMethods = nt.Methods, nt.PtrMethods
+		}
 		if types.IsInterface(e.t) {
 			continue
 		}
@@ -481,8 +487,8 @@ func (fe *frontend) fillMethods() {
 				}
 			}
 		}
-		fill(e.t, nt.Methods)
-		fill(types.NewPointer(e.t), nt.PtrMethods)
+		fill(e.t, methods)
+		fill(types.NewPointer(e.t), ptrMethods)
 	}
 }
 

@@ -390,16 +390,16 @@ export class Types {
     return r;
   }
 
-  /** Method table of a dynamic type (named T, or *T for named T). */
+  /** Method table of a dynamic type (named T or struct{...}, or a pointer to one). */
   methods(t: number): Record<string, number> {
     const c = this.methodsC[t];
     if (c) return c;
     const ty = this.prog.types[t]!;
     let r: Record<string, number> = {};
-    if (ty.k === "named") r = ty.methods;
+    if (ty.k === "named" || ty.k === "struct") r = ty.methods ?? {};
     else if (ty.k === "pointer") {
       const e = this.prog.types[ty.elem]!;
-      if (e.k === "named") r = e.ptrMethods;
+      if (e.k === "named" || e.k === "struct") r = e.ptrMethods ?? {};
     }
     this.methodsC[t] = r;
     return r;

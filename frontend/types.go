@@ -17,9 +17,11 @@ type typeTable struct {
 	named []namedEntry // filled with method sets at the end
 }
 
+// namedEntry is a type whose method sets are filled at the end: a named
+// type, or an unnamed struct with embedded fields (promoted methods).
 type namedEntry struct {
 	id int
-	t  *types.Named
+	t  types.Type
 }
 
 var intKinds = map[types.BasicKind][2]string{
@@ -126,7 +128,15 @@ func (tt *typeTable) build(t types.Type, id int) any {
 			fs[i] = Field{Name: f.Name(), Type: tt.id(f.Type()), Offset: off, Embedded: f.Embedded()}
 			off += tt.slotsOf(f.Type())
 		}
-		return TStruct{K: "struct", Fields: fs, Slots: slots}
+		res := TStruct{K: "struct", Fields: fs, Slots: slots}
+		for _, f := range fs {
+			if f.Embedded {
+				res.Methods, res.PtrMethods = map[string]int{}, map[string]int{}
+				tt.named = append(tt.named, namedEntry{id, t})
+				break
+			}
+		}
+		return res
 	case *types.Signature:
 		return tt.sig(t, nil)
 	case *types.Interface:

@@ -80,6 +80,10 @@ type TStruct struct {
 	K      string  `json:"k"`
 	Fields []Field `json:"fields"`
 	Slots  int     `json:"slots"`
+	// Method sets of an unnamed struct with embedded fields (promoted
+	// methods), and of the pointer to it; omitted when empty.
+	Methods    map[string]int `json:"methods,omitempty"`
+	PtrMethods map[string]int `json:"ptrMethods,omitempty"`
 }
 type Field struct {
 	Name     string `json:"name"`

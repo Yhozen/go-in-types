@@ -85,8 +85,9 @@ Rules:
 - `alloc` creates a zeroed object of the element's slots; `heap` is only a
   hint. A pointer to a field/element is `{o, i + offset}`.
 - A dynamic type implements an interface when its method set (`methods` of
-  a named type, `ptrMethods` for `*T`) has every method name of the
-  interface with the identical signature (`sigs`, receiver dropped).
+  a named type or of an unnamed struct with embedded fields, `ptrMethods`
+  for a pointer to either) has every method name of the interface with the
+  identical signature (`sigs`, receiver dropped).
   Runtime panics are `runtime.errorString` (message without the
   "runtime error: " prefix) or `runtime.plainError` (no prefix: nil-map
   writes, type assertions, channel misuse); both are always in the program.

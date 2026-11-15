@@ -185,7 +185,10 @@ export function validate(p: unknown): string[] {
         if (!isInt(t.len)) err(w, "bad len");
         break;
       case "struct": {
-        keys(w, t, ["k", "fields", "slots"]);
+        keys(w, t, ["k", "fields", "slots"], ["methods", "ptrMethods"]);
+        for (const m of ["methods", "ptrMethods"])
+          if (m in t && (!isObj(t[m]) || !Object.values(t[m]).every(funcOk)))
+            err(w, `${m} is not a name -> FuncId record`);
         if (!Array.isArray(t.fields)) {
           err(w, "fields not an array");
           break;

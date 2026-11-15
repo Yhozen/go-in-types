@@ -63,7 +63,14 @@ export type Type =
   | { k: "pointer"; elem: TypeId; slots: 1 }
   | { k: "slice"; elem: TypeId; slots: 1 }
   | { k: "array"; elem: TypeId; len: number; slots: number }
-  | { k: "struct"; fields: Field[]; slots: number }
+  | {
+      k: "struct";
+      fields: Field[];
+      slots: number;
+      /** Unnamed struct with embedded fields: promoted method sets of the struct and of a pointer to it (as `NamedType`); absent when empty. */
+      methods?: Record<string, FuncId>;
+      ptrMethods?: Record<string, FuncId>;
+    }
   | { k: "map"; key: TypeId; elem: TypeId; slots: 1 }
   | { k: "chan"; elem: TypeId; slots: 1 }
   | { k: "func"; params: TypeId[]; results: TypeId[]; variadic: boolean; slots: 1 }

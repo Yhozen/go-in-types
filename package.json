@@ -13,7 +13,8 @@
     "gen:overlay": "node overlay/gen.ts",
     "gen:go-out": "node scripts/gen-go-out.ts",
     "gate:ref": "node scripts/gate-ref.ts",
-    "gen:strmap": "node scripts/gen-strmap.ts"
+    "gen:strmap": "node scripts/gen-strmap.ts",
+    "gen:int": "node scripts/gen-int-tables.ts && node scripts/gen-int-tests.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

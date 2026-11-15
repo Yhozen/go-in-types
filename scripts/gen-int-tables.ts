@@ -337,6 +337,21 @@ export function tablesSource(): string {
         .map((v) => [enc(BigInt(v)), hex(Math.abs(v))]),
     ),
     table(
+      "N1",
+      "A form of up to three nibbles -> nibble 1 of its 12-bit pattern.",
+      f3.map(([v, k]) => [k, hex((v >> 4) & 15)]),
+    ),
+    table(
+      "N2",
+      "A form of up to three nibbles -> nibble 2 of its 12-bit pattern.",
+      f3.map(([v, k]) => [k, hex((v >> 8) & 15)]),
+    ),
+    table(
+      "RAW3",
+      "A 12-bit pattern (three nibbles, least significant first) -> the canonical form of its signed value.",
+      f3.map(([v, k]) => [[v & 15, (v >> 4) & 15, (v >> 8) & 15].map(hex).join(""), k]),
+    ),
+    table(
       "SGN3",
       'A form of up to three nibbles -> "-" when negative, else "+".',
       f3.map(([v, k]) => [k, v < 0 ? "-" : "+"]),
@@ -345,6 +360,13 @@ export function tablesSource(): string {
       "ABS3",
       "A form of up to three nibbles but -2048 -> |a|.",
       f3.filter(([v]) => v !== -2048).map(([v, k]) => [k, enc(BigInt(Math.abs(v)))]),
+    ),
+    table(
+      "DMAGX",
+      "DMAG with an index signature (for divisors known to be in its domain).",
+      Array.from({ length: 31 }, (_, i) => i - 15)
+        .filter((v) => v !== 0)
+        .map((v) => [enc(BigInt(v)), hex(Math.abs(v))]),
     ),
     table(
       "NOT3",

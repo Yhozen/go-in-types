@@ -13,7 +13,13 @@
 //
 // Adapted from lua-in-types' src/aot/types/int64.ts: every operation walks
 // the nibbles with lookup tables (int-tables.gen.ts), so a value costs what
-// its length is; operands of one nibble (-8..7) take one table lookup.
+// its length is. Short paths come first: forms of one or two nibbles
+// (-128..127, every int8/uint8 value) add and compare in one lookup of a
+// pair table (int-pairs.gen.ts, 65,536 keys each, ~29 MB of checker memory
+// per table); forms of up to three nibbles (-2048..2047: indices, ast.Kind
+// values) split into a two-nibble high part and a nibble (HI3/LO3 tables)
+// for + - < <= & | ^ &^, shifts, * and / % by |b| < 16; - and ^ are one
+// lookup. Longer operands take the nibble loops.
 // Because forms are sign-extended, the 64-bit result of + - * ^ & | &^ <<
 // already has the right low w bits: `Fit<W, _>` cuts it to w/4 nibbles and
 // re-trims (nothing to do for i64/u64, or when the result is short). Bitwise
@@ -30,10 +36,47 @@
 // Internally, unsigned magnitudes ("U" strings) are nibbles least significant
 // first without a sign nibble; zero is "" and trailing zeros may appear.
 //
-// Cost (instantiations per op, stock tsrs `--extendedDiagnostics`, measured by
-// scripts/bench-int.ts; see the table at the end of this header).
+// Cost: instantiations per op on stock tsrs 0.23.0 (`TSRS_FAST=1 tsrs --fast
+// --extendedDiagnostics`), `scripts/heavy.sh node scripts/bench-int.ts 200`:
+// 200 distinct random cases per cell minus a baseline of the same assertions
+// on literals. Columns: "1" both operands -8..7 (i64; u64 for "(u)" rows, so
+// negatives are full-width there), "byte" uint8 0..255, "idx" int 0..255,
+// "i16" int16 0..400 (ast.Kind-like), "32"/"64" full-width random operands
+// (i32/u32, i64/u64). Shifts count by a uint64 1..w-1. `*` star: fewer
+// distinct cases exist. lua-in-types int64 for reference (its columns 1, 2,
+// 8, 16 nibbles): Add 6/94/300/566, Mul 6/387/2978/10702, IDiv 7/674/2544/
+// 4654, Band 6/64/212/404, Lt 6-23/57/140/219, ToDec 0/4/1141/3893.
 //
-// COST-TABLE
+// | op         |    1 | byte |  idx |  i16 |   32 |     64 |
+// | ---------- | ---: | ---: | ---: | ---: | ---: | -----: |
+// | Add        |   13 |   18 |   37 |   43 |  352 |    577 |
+// | Sub        |   18 |   23 |   41 |   50 |  345 |    573 |
+// | Mul        |   14 |  367 |  322 |  408 | 3032 | 10,739 |
+// | Quo        |   14 |  675 |  673 |  823 | 2435 |  4,422 |
+// | Quo (u)    |  919 |  670 |  655 |  834 | 2358 |  4,366 |
+// | Rem        |   13 |  668 |  662 |  811 | 2443 |  4,455 |
+// | And        |   24 |   24 |   24 |   24 |  214 |    405 |
+// | Or, Xor    |   22 |   22 |   22 |   22 |  210 |    402 |
+// | AndNot     |   26 |   28 |   28 |   28 |  287 |    529 |
+// | Shl        |   45 |   44 |   55 |   62 |  264 |    302 |
+// | Shr        |   31 |   51 |   31 |   28 |  158 |    262 |
+// | Shr (u)    |  138 |   53 |   41 |   28 |  200 |    321 |
+// | Eq         |    3 |    3 |    3 |    3 |    3 |      3 |
+// | Lt, Le     |   23 |   23 |   23 |   23 |  135 |    239 |
+// | Lt (u)     |   23 |   23 |   23 |   23 |  142 |    214 |
+// | Neg        |   10 |   14 |   10 |   13 |  133 |    145 |
+// | Not        |    6 |    6 |    6 |    6 |   73 |    121 |
+// | Conv trunc |   17 |    6 |   17 |   17 |   43 |     43 |
+// | Conv zext  |    6 |   36 |    6 |   22 |   45 |      6 |
+// | ToDec      |    6 |   19 |    6 |    6 | 1153 |  3,899 |
+//
+// Constant operands on the short paths (a in 0..2047): a * 10 ~100, a / 10
+// ~120 (u: ~90), a % 10 ~115, a * 2^k ~38, a / 2 ~46, a >> 3 ~27, a << 3
+// ~34. (The byte/idx Mul and Quo columns use random divisors up to 255, which
+// take the loops.) The `W` dispatch costs 1-4 per op; aliases specialised per
+// kind would save that. Cost does not depend on unrelated live types: with a
+// forced 102,400-tuple trie in the same file, the per-op numbers of Add, Mul,
+// Quo, Lt and Shr are identical (bench-int.ts --noise 102400).
 import type * as P from "./int-pairs.gen.ts";
 import type * as T from "./int-tables.gen.ts";
 
@@ -426,11 +469,22 @@ type XorL<A extends string, B extends string, O extends string> = A extends `${i
     : never
   : never;
 
-type And64<A extends string, B extends string> = A extends Nib
-  ? B extends Nib
-    ? T.AND[`${A}${B}`]
-    : AndL<A, B, "">
-  : AndL<A, B, "">;
+/** A nibble table applied to the 12-bit patterns of two forms of up to three nibbles. */
+type Bit3<
+  Tab extends Record<string, string>,
+  A extends string,
+  B extends string,
+> = T.RAW3[`${Tab[`${T.LO3[A]}${T.LO3[B]}`]}${Tab[`${T.N1[A]}${T.N1[B]}`]}${Tab[`${T.N2[A]}${T.N2[B]}`]}`];
+
+/** Whether both operands are forms of up to three nibbles. */
+type Both3<A extends string, B extends string> = A extends keyof T.TODEC
+  ? B extends keyof T.TODEC
+    ? true
+    : false
+  : false;
+
+type And64<A extends string, B extends string> =
+  Both3<A, B> extends true ? Bit3<T.AND, A, B> : AndL<A, B, "">;
 
 // ---- shifts (64-bit) ----
 
@@ -677,11 +731,61 @@ type UMul<
     : UMul<X, YR, "", `${Out}0`>
   : `${Out}${Acc}`;
 
-type Mul64<A extends string, B extends string> = A extends Nib
-  ? B extends Nib
-    ? T.MUL1[`${A}${B}`]
-    : MulG<A, B>
-  : MulG<A, B>;
+type Mul64<A extends string, B extends string> = string extends T.MUL1[`${A}${B}`]
+  ? Short<A, B> extends true
+    ? Mul3<A, B>
+    : Short<B, A> extends true
+      ? Mul3<B, A>
+      : MulG<A, B>
+  : T.MUL1[`${A}${B}`];
+
+/**
+ * a * b for |a| < 2048 and |b| < 16: the product fits 16 signed bits, so it
+ * is one multiply row over the 16-bit pattern of a (or of -a when b < 0).
+ */
+type Mul3<A extends string, B extends string> = MRow<
+  T.SGN3[B] extends "-" ? T.NEGX[A] : A,
+  T.DMAGX[B]
+>;
+type MRow<X extends string, D extends string> = M0<T.MULC[`${T.LO3[X]}${D}0`], X, D>;
+type M0<P extends string, X extends string, D extends string> = P extends `${infer lo}${infer hi}`
+  ? M1<T.MULC[`${T.N1[X]}${D}${hi}`], lo, X, D>
+  : never;
+type M1<
+  P extends string,
+  R0 extends string,
+  X extends string,
+  D extends string,
+> = P extends `${infer lo}${infer hi}` ? M2<T.MULC[`${T.N2[X]}${D}${hi}`], R0, lo, X, D> : never;
+type M2<
+  P extends string,
+  R0 extends string,
+  R1 extends string,
+  X extends string,
+  D extends string,
+> = P extends `${infer lo}${infer hi}`
+  ? M3<T.MULC[`${T.EXT[T.N2[X]]}${D}${hi}`], R0, R1, lo>
+  : never;
+type M3<
+  P extends string,
+  R0 extends string,
+  R1 extends string,
+  R2 extends string,
+> = P extends `${infer lo}${string}` ? Trim4<R0, R1, R2, lo> : never;
+
+/** The canonical form of a 16-bit pattern r0..r3 read as signed. */
+type Trim4<
+  R0 extends string,
+  R1 extends string,
+  R2 extends string,
+  R3 extends string,
+> = T.EXT[R2] extends R3
+  ? T.EXT[R1] extends R2
+    ? T.EXT[R0] extends R1
+      ? R0
+      : `${R0}${R1}`
+    : `${R0}${R1}${R2}`
+  : `${R0}${R1}${R2}${R3}`;
 
 type MulG<A extends string, B extends string> = B extends keyof T.POW2
   ? T.POW2[B] extends `${infer q}${infer r}`
@@ -828,9 +932,7 @@ type Short<A extends string, B extends string> = A extends keyof T.NEG3
 
 /** [a / b, a % b] signed, truncated (b is not 0). */
 type QuoRemS<A extends string, B extends string> =
-  Short<A, B> extends true
-    ? QRS3<T.SGN3[A], T.SGN3[B], T.ABS3[A], T.DMAG[B & keyof T.DMAG]>
-    : QuoRemSG<A, B>;
+  Short<A, B> extends true ? QRS3<T.SGN3[A], T.SGN3[B], T.ABS3[A], T.DMAGX[B]> : QuoRemSG<A, B>;
 
 type QuoRemSG<A extends string, B extends string> =
   ToMag<A> extends [infer NA, infer UA extends string]
@@ -845,7 +947,7 @@ type QuoRemSG<A extends string, B extends string> =
 type QuoRemU<K extends W, A extends string, B extends string> =
   Short<A, B> extends true
     ? `${T.SGN3[A]}${T.SGN3[B]}` extends "++"
-      ? QR3<A, T.DMAG[B & keyof T.DMAG]>
+      ? QR3<A, T.DMAGX[B]>
       : QuoRemUG<K, A, B>
     : QuoRemUG<K, A, B>;
 
@@ -911,7 +1013,7 @@ type QuoSG<K extends W, A extends string, B extends string> = B extends "1"
 type QuoU<K extends W, A extends string, B extends string> =
   Short<A, B> extends true
     ? `${T.SGN3[A]}${T.SGN3[B]}` extends "++"
-      ? Fst<QR3<A, T.DMAG[B & keyof T.DMAG]>>
+      ? Fst<QR3<A, T.DMAGX[B]>>
       : QuoUG<K, A, B>
     : QuoUG<K, A, B>;
 
@@ -949,7 +1051,7 @@ type RemSG<A extends string, B extends string> = B extends "1" | "f"
 type RemU<K extends W, A extends string, B extends string> =
   Short<A, B> extends true
     ? `${T.SGN3[A]}${T.SGN3[B]}` extends "++"
-      ? Snd<QR3<A, T.DMAG[B & keyof T.DMAG]>>
+      ? Snd<QR3<A, T.DMAGX[B]>>
       : RemUG<K, A, B>
     : RemUG<K, A, B>;
 
@@ -962,17 +1064,11 @@ type RemUG<K extends W, A extends string, B extends string> = B extends "1"
 /** a & b. */
 export type And<_K extends W, A extends string, B extends string> = And64<A, B>;
 /** a | b. */
-export type Or<_K extends W, A extends string, B extends string> = A extends Nib
-  ? B extends Nib
-    ? T.OR[`${A}${B}`]
-    : OrL<A, B, "">
-  : OrL<A, B, "">;
+export type Or<_K extends W, A extends string, B extends string> =
+  Both3<A, B> extends true ? Bit3<T.OR, A, B> : OrL<A, B, "">;
 /** a ^ b. */
-export type Xor<_K extends W, A extends string, B extends string> = A extends Nib
-  ? B extends Nib
-    ? T.XOR[`${A}${B}`]
-    : XorL<A, B, "">
-  : XorL<A, B, "">;
+export type Xor<_K extends W, A extends string, B extends string> =
+  Both3<A, B> extends true ? Bit3<T.XOR, A, B> : XorL<A, B, "">;
 /** a &^ b (and not). */
 export type AndNot<_K extends W, A extends string, B extends string> = And64<A, Not64<B>>;
 

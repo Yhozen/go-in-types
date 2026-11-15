@@ -733,6 +733,20 @@ class FuncEmitter {
   }
 }
 
+/**
+ * A tuple literal. tsrs defers a tuple literal in an alias when an element
+ * names a type alias (H4): its elements are resolved only when read, under
+ * the mapper of the segment that built it. Values that outlive a step (call
+ * arguments, saved registers, defer records, results) must not be such
+ * tuples, so those are built with `R.TPush` (a constructor) instead.
+ */
+export function tup(els: string[]): string {
+  if (els.every((e) => !ALIAS_REF.test(e))) return `[${els.join(", ")}]`;
+  return els.reduce((acc, e) => `R.TPush<${acc}, ${e}>`, "[]");
+}
+/** Text that may name a type alias: a generic reference or a zero-value alias. */
+const ALIAS_REF = /[A-Za-z_$][\w$]*\s*<|\bZO?\d+\b/;
+
 /** Aggregates with more slots have no zero value in types. */
 const BIG_SLOTS = 1 << 16;
 const BARE = "F extends string ? ";
@@ -902,7 +916,7 @@ class SegB {
     this.Fv = saved.F;
     this.e.out.push(`interface ${tab} { ${props.join(" ")} }`);
     this.end(
-      `${x} extends keyof ${tab} ? R.Y<${tab}[${x}], ${this.H}, ${this.K}, ${this.X}, [${avals.join(", ")}], ${this.Fv}> : ${def}`,
+      `${x} extends keyof ${tab} ? R.Y<${tab}[${x}], ${this.H}, ${this.K}, ${this.X}, ${tup(avals)}, ${this.Fv}> : ${def}`,
     );
   }
   /** An operand as an atom (binding its expression if needed). */
@@ -963,7 +977,7 @@ class SegB {
       return v ? this.forceAtomText(v) : "null";
     });
     const d = fe.hasD ? this.dText() : "null";
-    return `["", [${regs.join(", ")}], ${d}, ${n2(fe.fid)}]`;
+    return tup(['""', tup(regs), d, n2(fe.fid)]);
   }
   dText(): string {
     const v = this.env.get(D_REG);
@@ -1136,7 +1150,7 @@ class SegB {
     const fe = this.fe;
     const key = `c${fe.fid}_${fe.callSite++}`;
     const live = this.liveNow(extraLive).filter((r) => r !== dst && r !== D_REG && this.env.has(r));
-    const regsT = `[${live.map((r) => this.env.get(r)!.t).join(", ")}]`;
+    const regsT = tup(live.map((r) => this.env.get(r)!.t));
     const cont = `R.Ct<"n", "${key}", ${regsT}, ${fe.hasD ? this.dText() : "null"}, ${n2(fe.fid)}, "">`;
     return { cont, resume: key, live };
   }
@@ -1210,7 +1224,7 @@ class SegB {
       }
       case "return": {
         const rs = ins.results.map((o) => this.val(o).t);
-        const v = rs.length === 0 ? "null" : rs.length === 1 ? rs[0]! : `[${rs.join(", ")}]`;
+        const v = rs.length === 0 ? "null" : rs.length === 1 ? rs[0]! : tup(rs);
         return this.end(this.tailRet(v));
       }
       case "panic": {
@@ -1437,7 +1451,7 @@ class SegB {
       }
       case "makeClosure": {
         const bs = ins.bindings.map((o) => this.val(o).t);
-        return this.setReg(ins.dst, `[${n2(ins.fn)}, [${bs.join(", ")}]]`);
+        return this.setReg(ins.dst, tup([n2(ins.fn), tup(bs)]));
       }
       case "call":
         return this.call(ins);
@@ -1473,7 +1487,7 @@ class SegB {
     const fe = this.fe;
     const key = `c${fe.fid}_${fe.callSite++}`;
     const live = this.liveNow().filter((r) => r !== D_REG && this.env.has(r));
-    const regsT = `[${live.map((r) => this.env.get(r)!.t).join(", ")}]`;
+    const regsT = tup(live.map((r) => this.env.get(r)!.t));
     const cont = `R.Ct<"d", "${key}", ${regsT}, ${this.dText()}, ${n2(fe.fid)}, "r">`;
     return { cont, resume: key, live };
   }
@@ -1756,7 +1770,7 @@ class SegB {
       this.check(`Hp.NilCk<${fv}>`, (r) => this.pnH(r));
       const argv = ins.args.map((o) => this.val(o).t);
       const { cont, resume, live } = this.callCont(ins.dst);
-      const tail = `R.Cl<${this.H}, R.Cons<${cont}, ${this.K}>, ${this.X}, ${this.Fv}, ${fv}[0], [${argv.join(", ")}], ${fv}[1]>`;
+      const tail = `R.Cl<${this.H}, R.Cons<${cont}, ${this.K}>, ${this.X}, ${this.Fv}, ${fv}[0], ${tup(argv)}, ${fv}[1]>`;
       this.finishSeg(tail);
       this.startResume(resume, ins.dst, live);
       return;
@@ -1767,7 +1781,7 @@ class SegB {
     const argv = ins.args.map((o) => this.val(o).t);
     const tab = e.methodTabs.has(c.method) ? `Mt_${mname(c.method)}` : "{}";
     const { cont, resume, live } = this.callCont(ins.dst);
-    const tail = `R.Cl<${this.H}, R.Cons<${cont}, ${this.K}>, ${this.X}, ${this.Fv}, R.Look<${tab}, ${rv}[0]>, [${[`${rv}[1]`, ...argv].join(", ")}], []>`;
+    const tail = `R.Cl<${this.H}, R.Cons<${cont}, ${this.K}>, ${this.X}, ${this.Fv}, R.Look<${tab}, ${rv}[0]>, ${tup([`${rv}[1]`, ...argv])}, []>`;
     this.finishSeg(tail);
     this.startResume(resume, ins.dst, live);
   }
@@ -1777,19 +1791,19 @@ class SegB {
     const e = this.e;
     const argv = ins.args.map((o) => this.val(o).t);
     let rec: string;
-    if ("static" in c) rec = `[${n2(c.static)}, [${argv.join(", ")}], []]`;
+    if ("static" in c) rec = tup([n2(c.static), tup(argv), "[]"]);
     else if ("value" in c) {
       const fv = this.atom(c.value);
-      rec = `R.DeferVal<${fv}, [${argv.join(", ")}]>`;
+      rec = `R.DeferVal<${fv}, ${tup(argv)}>`;
     } else if ("invoke" in c) {
       const rv = this.atom(c.invoke);
       this.check(`Hp.NilCk<${rv}>`, (r) => this.pnH(r));
       const tab = e.methodTabs.has(c.method) ? `Mt_${mname(c.method)}` : "{}";
-      rec = `[R.Look<${tab}, ${rv}[0]>, [${[`${rv}[1]`, ...argv].join(", ")}], []]`;
+      rec = tup([`R.Look<${tab}, ${rv}[0]>`, tup([`${rv}[1]`, ...argv]), "[]"]);
     } else {
       // builtin defers: record name, args and the static print info
       const info = ins.args.map((o) => this.printInfo(this.typeOf(o)));
-      rec = `["b:${c.builtin}", [${argv.join(", ")}], [${info.join(", ")}]]`;
+      rec = tup([`"b:${c.builtin}"`, tup(argv), `[${info.join(", ")}]`]);
     }
     if (ins.stack) {
       // onto the frame a deferstack value names (range-over-func bodies)
@@ -1967,7 +1981,7 @@ class SegB {
         const typ = this.val(ins.args[1]!).t;
         const meth = this.val(ins.args[2]!).t;
         this.check(`R.WrapNilCk<${p}>`, () =>
-          this.panicState(`[${e.PE}, R.WrapNilMsg<${typ}, ${meth}>]`),
+          this.panicState(tup([e.PE, `R.WrapNilMsg<${typ}, ${meth}>`])),
         );
         return set(p, { atom: true });
       }

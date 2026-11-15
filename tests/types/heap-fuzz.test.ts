@@ -515,6 +515,59 @@ function genCase(seed: number, nOps: number) {
     });
     return true;
   });
+  // append(s, a, b, ...): IR: tmp := make([]T, k); tmp[i] = v_i; append(s, tmp...);
+  // types: the same make and stores (ids stay aligned), then AppendVals with the values
+  ops.push(() => {
+    const ss = regsOf((t) => t === T_SINT || t === T_SU8);
+    if (ss.length === 0) return false;
+    const [s, st] = pick(ss);
+    const e = SLICE_ELEM[st]!;
+    const k = int(1, 5);
+    const vals = Array.from({ length: k }, () => valOf(e)!);
+    const tmp = newReg(st);
+    const ptrs = vals.map(() => newReg(PTR[e]!));
+    const dst = newReg(st);
+    const instrs: Instr[] = [
+      { op: "makeSlice", dst: tmp, t: st, len: ci(k), cap: ci(k) },
+      ...vals.flatMap((v, i): Instr[] => [
+        { op: "indexAddr", dst: ptrs[i]!, t: PTR[e]!, x: { r: tmp }, index: ci(i) },
+        { op: "store", ptr: { r: ptrs[i]! }, val: v },
+      ]),
+      { op: "call", dst, t: st, callee: { builtin: "append" }, args: [{ r: s }, { r: tmp }] },
+    ];
+    instrs.forEach((instr, j) =>
+      steps.push({
+        instr,
+        tl: (c) => {
+          const K = strLit(encNat(k));
+          const [size] = ti.T.size(e);
+          if (j === 0) {
+            c.line(`type ${c.hc} = H.MakeSlice<${c.hp}, ${K}, "1", ${zeroTup(e)}>;`);
+            c.line(`type ${c.R(tmp)} = H.MakeSliceV<${c.hp}, ${K}, ${K}>;`);
+          } else if (j === instrs.length - 1) {
+            const V = `[${vals.map((v) => opText(v, e, c.R)).join(", ")}]`;
+            c.line(
+              `type A_${c.hc} = H.AppendVals<${c.hp}, ${c.R(s)}, ${V}, ${K}, "1", ${zeroTup(e)}, ${strLit(encNat(size))}, true>;`,
+            );
+            c.line(`type ${c.hc} = A_${c.hc}["0"];`);
+            c.line(`type ${c.R(dst)} = A_${c.hc}["1"];`);
+          } else if (j % 2 === 1) {
+            const i = (j - 1) / 2;
+            c.same();
+            c.line(
+              `type ${c.R(ptrs[i]!)} = H.SliceIndexAddr<${c.R(tmp)}, ${strLit(encNat(i))}, "1">;`,
+            );
+          } else {
+            const i = (j - 2) / 2;
+            c.line(
+              `type ${c.hc} = H.Store1<${c.hp}, ${c.R(ptrs[i]!)}, ${opText(vals[i]!, e, c.R)}>;`,
+            );
+          }
+        },
+      }),
+    );
+    return true;
+  });
   // makeClosure (func 3 has free vars int, string)
   ops.push(() => {
     const a = valOf(T_INT)!;
@@ -531,7 +584,7 @@ function genCase(seed: number, nOps: number) {
     });
     return true;
   });
-  const weights = [3, 3, 3, 1, 3, 3, 3, 4, 2, 1, 2, 2, 2, 1];
+  const weights = [3, 3, 3, 1, 3, 3, 3, 4, 2, 1, 2, 2, 2, 2, 1];
   const total = weights.reduce((a, b) => a + b);
   const mkProg = (): Program => ({
     version: 2,
@@ -601,13 +654,14 @@ function genCase(seed: number, nOps: number) {
     let i = 0;
     while (k >= weights[i]!) k -= weights[i++]!;
     const nr = regTypes.length;
+    const ns = steps.length;
     if (!ops[i]!()) continue;
     const m = new Machine(mkProg());
     m.boot();
     m.run();
     if (m.curPanic === null) continue;
     if (r() < 0.12) break;
-    steps.pop();
+    steps.length = ns;
     regTypes.length = nr;
   }
   const prog = mkProg();

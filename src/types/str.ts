@@ -5,21 +5,21 @@
 // lowercase hex nibbles, least significant first, the shortest two's
 // complement that sign-extends to the value's pattern sign-extended to 64
 // bits ("0", "1", "f" for -1, "80" for 8; a uint8 255 is "f"). Operations
-// that panic return `Panic<Msg>` (heap.ts's `Panic<"e", [msg]>`: a
-// runtime.errorString whose message, without the "runtime error: " prefix,
-// is one string part), which the caller raises.
+// that panic return int.ts's `Panic<Msg>`, `["panic", msg]` with Go's
+// message without the "runtime error: " prefix, which the caller raises.
 //
 // Long strings are read through an index, `Chars<S>` (adapted from
 // lua-in-types' src/aot/types/str.ts): a 16-ary trie of 256-char blocks keyed
 // by the nibbles of the offset, built once per distinct string and memoized
 // by the checker's alias-instantiation cache, so a byte read costs a few
 // indexed accesses once it exists.
-import type { Panic as HP } from "./heap.ts";
+import type * as HS from "./heap.ts";
+import type * as HN from "./nat.ts";
 import type * as I from "./int.ts";
 import type * as K from "./str-tables.gen.ts";
 
-/** A runtime panic (runtime.errorString with this message), heap.ts's form with one message part. */
-export type Panic<M extends string> = HP<"e", [M]>;
+/** A runtime panic: int.ts's `["panic", msg]`. */
+export type Panic<M extends string> = I.Panic<M>;
 
 type NegNib = "8" | "9" | "a" | "b" | "c" | "d" | "e" | "f";
 
@@ -767,3 +767,170 @@ export type FromRunes<Rs extends string[], O extends string = ""> = Rs extends [
 ]
   ? FromRunes<R, `${O}${RuneStr<r>}`>
   : O;
+
+// ---------------------------------------------------------------- conversions with heap slices
+//
+// Slices are heap.ts's `[Id, Off, Len, Cap]` (null for nil); a byte or rune
+// slice's backing array is a lazy object of one slot per element. Ops that
+// allocate return the heap; the new slice value is read with the `...V`
+// alias from the heap before (heap.ts's MakeSlice / MakeSliceV pattern).
+
+type SliceOf<Id, Off, L, C> = HS.SliceMk<Id, Off, L, C>;
+type F0<X> = X["0" & keyof X];
+type F1<X> = X["1" & keyof X];
+type F2<X> = X["2" & keyof X];
+/** A slot read from a lazy object: unwritten slots are the zero "0". */
+type Slot<O, S extends string> =
+  HS.OGet<O, S> extends infer V ? ([V] extends [undefined] ? "0" : V) : never;
+
+/** cap of `[]byte(s)`: roundupsize(len, noscan). */
+type BytesCap<N extends string> = HN.RoundUpSize<N, true>;
+/** The heap after `[]byte(s)` (an empty s allocates nothing). */
+export type StrToBytes<H, S extends string> = S extends ""
+  ? H
+  : StrFill<HS.MakeSlice<H, BytesCap<Len<S>>, "1", ["0"]>, HS.NextId<H>, S, "0">;
+/** The slice `[]byte(s)` gives, read from the heap before StrToBytes. */
+export type StrToBytesV<H, S extends string> = S extends ""
+  ? SliceOf<"00000", "0", "0", "0">
+  : Len<S> extends infer N extends string
+    ? SliceOf<HS.NextId<H>, "0", N, BytesCap<N>>
+    : never;
+/** Copy S's bytes to object Id from slot Off on, 256 at a time. */
+type StrFill<H, Id, S extends string, Off extends string> =
+  K.Blk256<S> extends [infer B extends { t: string }, infer R extends string, unknown]
+    ? StrFill<
+        HS.CopyVals_<H, SliceOf<Id, Off, "0", "0">, Codes<B["t"]>, ["0"]>,
+        Id,
+        R,
+        HN.Add<Off, "001">
+      >
+    : S extends ""
+      ? H
+      : HS.CopyVals_<H, SliceOf<Id, Off, "0", "0">, Codes<S>, ["0"]>;
+
+/** `string(b)` for a byte slice (also strings.Builder.String's buffer). */
+export type BytesToStr<H, Sl> = Sl extends null
+  ? ""
+  : F2<Sl> extends "0"
+    ? ""
+    : ReadD<HS.GetObj<H, F0<Sl>>, F1<Sl> & string, F2<Sl> & string, "", "b">;
+/** Read N slots from Off as bytes (Kind "b") or runes ("r"), 250 per chain. */
+type ReadD<O, Off extends string, N extends string, Acc extends string, Kind> =
+  ReadL<O, Off, N, Acc, Kind, "250"> extends infer R
+    ? F0<R> extends 1
+      ? ReadD<O, F1<R> & string, F2<R> & string, R["3" & keyof R] & string, Kind>
+      : R["3" & keyof R]
+    : never;
+type ReadL<
+  O,
+  Off extends string,
+  N extends string,
+  Acc extends string,
+  Kind,
+  F extends string,
+> = N extends "0"
+  ? [0, Off, N, Acc]
+  : F extends "0"
+    ? [1, Off, N, Acc]
+    : ReadL<
+        O,
+        NInc<Off>,
+        NDec<N>,
+        `${Acc}${Kind extends "b" ? K.CHR[Slot<O, Off> & string] : RuneStr<Slot<O, Off> & string>}`,
+        Kind,
+        K.FUEL[F]
+      >;
+
+/** The heap after `[]rune(s)`. */
+export type StrToRunes<H, S extends string> = S extends ""
+  ? H
+  : RunesCnt<S> extends infer N extends string
+    ? RuneFill<HS.MakeSlice<H, RunesCap<N>, "1", ["0"]>, HS.NextId<H>, S, "0">
+    : never;
+/** The slice `[]rune(s)` gives, read from the heap before StrToRunes. */
+export type StrToRunesV<H, S extends string> = S extends ""
+  ? SliceOf<"00000", "0", "0", "0">
+  : RunesCnt<S> extends infer N extends string
+    ? SliceOf<HS.NextId<H>, "0", N, RunesCap<N>>
+    : never;
+/** cap of `[]rune(s)`: roundupsize(4 n) / 4. */
+type RunesCap<N extends string> = HN.Div<HN.RoundUpSize<HN.Mul<N, "4">, true>, "4">;
+/** The number of runes in S (utf8.RuneCountInString). */
+export type RunesCnt<S extends string> = RCntD<S, "0">;
+type RCntD<S extends string, N extends string> =
+  RCntL<S, N, "300"> extends infer R
+    ? F0<R> extends 1
+      ? RCntD<F1<R> & string, F2<R> & string>
+      : F2<R>
+    : never;
+type RCntL<S extends string, N extends string, F extends string> = S extends ""
+  ? [0, "", N]
+  : F extends "0"
+    ? [1, S, N]
+    : S extends `${infer a}${infer R}`
+      ? K.CLS[a] extends "1"
+        ? RCntL<R, NInc<N>, K.FUEL[F]>
+        : DecodeHead<S> extends [string, string, infer R2 extends string]
+          ? RCntL<R2, NInc<N>, K.FUEL[F]>
+          : never
+      : never;
+/** Copy S's runes to object Id from slot Off on, up to 200 per chunk. */
+type RuneFill<H, Id, S extends string, Off extends string> = S extends ""
+  ? H
+  : RunesN<S, [], "200"> extends [infer Rs, infer R extends string, infer C extends string]
+    ? RuneFill<HS.CopyVals_<H, SliceOf<Id, Off, "0", "0">, Rs, ["0"]>, Id, R, HN.Add<Off, C>>
+    : never;
+/** Up to F runes of S: [runes, rest, count]. */
+type RunesN<
+  S extends string,
+  O extends string[],
+  F extends string,
+  N extends string = "0",
+> = S extends ""
+  ? [O, "", N]
+  : F extends "0"
+    ? [O, S, N]
+    : DecodeHead<S> extends [infer r extends string, string, infer R extends string]
+      ? RunesN<R, [...O, r], K.FUEL[F], NInc<N>>
+      : never;
+
+/** `string(runes)` for a rune slice (invalid runes become U+FFFD). */
+export type RunesToStr<H, Sl> = Sl extends null
+  ? ""
+  : F2<Sl> extends "0"
+    ? ""
+    : ReadD<HS.GetObj<H, F0<Sl>>, F1<Sl> & string, F2<Sl> & string, "", "r">;
+
+/** strings.(*Builder).String: string(b.buf), the slice in field 1 of *b (B not nil). */
+export type BuilderString<H, B> = BytesToStr<H, HS.Load1<H, HS.FieldAddr<B, "1">, null>>;
+
+// ---- internal/bytealg on byte slices (by their contents)
+
+/** `bytealg.Compare(a, b)`. */
+export type BCompare<H, A, B> = OnBytes<"cmp", BytesToStr<H, A>, BytesToStr<H, B>>;
+/** `bytealg.Equal(a, b)`. */
+export type BEqual<H, A, B> = OnBytes<"eq", BytesToStr<H, A>, BytesToStr<H, B>>;
+/** `bytealg.Count(b, c)`. */
+export type BCount<H, B, C extends string> = OnBytes<"count", BytesToStr<H, B>, C>;
+/** `bytealg.IndexByte(b, c)`. */
+export type BIndexByte<H, B, C extends string> = OnBytes<"ixb", BytesToStr<H, B>, C>;
+/** `bytealg.Index(a, b)`. */
+export type BIndex<H, A, B> = OnBytes<"ix", BytesToStr<H, A>, BytesToStr<H, B>>;
+/** Deferred dispatch (keeps declaration checks from expanding the string ops). */
+type OnBytes<Op, A, B> = A extends string
+  ? B extends string
+    ? Op extends "cmp"
+      ? Compare<A, B>
+      : Op extends "eq"
+        ? Eq<A, B>
+        : Op extends "count"
+          ? CountByte<A, B>
+          : Op extends "ixb"
+            ? IndexByte<A, B>
+            : IndexStr<A, B>
+    : never
+  : never;
+/** The heap after `bytealg.MakeNoZero(n)` (make([]byte, n) with cap roundupsize(n)). */
+export type MakeNoZero<H, N extends string> = HS.MakeSlice<H, BytesCap<N>, "1", ["0"]>;
+/** The slice MakeNoZero gives, read from the heap before. */
+export type MakeNoZeroV<H, N extends string> = SliceOf<HS.NextId<H>, "0", N, BytesCap<N>>;

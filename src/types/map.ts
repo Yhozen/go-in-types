@@ -44,7 +44,8 @@
 // the heap is only an alias argument. H3: tables are read by literal keys.
 import type * as K from "./str-tables.gen.ts";
 import type * as T from "./map-tables.gen.ts";
-import type { AllocObj, GetObj, NextId, Panic, PutObj } from "./heap.ts";
+import type { AllocObj, GetObj, NextId, PutObj } from "./heap.ts";
+import type { Panic } from "./int.ts";
 import type { Len, NDec, NInc, NLt, NTrim } from "./str.ts";
 
 // ---------------------------------------------------------------- constructors
@@ -394,7 +395,7 @@ export type MapLookupOk<H, M, C extends string, Z> = M extends null
   ? Mk2<Z, false>
   : OnMs<GetObj<H, M>, "getok", C, Z, 0>;
 /** `true`, or the nil-map write panic (runtime.plainError). */
-export type MapUpdateCk<M> = M extends null ? Panic<"p", ["assignment to entry in nil map"]> : true;
+export type MapUpdateCk<M> = M extends null ? Panic<"assignment to entry in nil map"> : true;
 /** The heap after `m[k] = v` (M not nil: MapUpdateCk first). */
 export type MapUpdate<H, M, C extends string, Key, V> = PutObj<
   H,

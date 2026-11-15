@@ -4,7 +4,7 @@
 // string semantics on byte strings. `vp run gen:strmap`.
 import { writeFileSync } from "node:fs";
 import { GoMap, MapIter } from "../src/ref/gomap.ts";
-import { decodeRune, encodeRune } from "../src/ref/values.ts";
+import { decodeRune, encodeRune, roundupsize } from "../src/ref/values.ts";
 import { mapStateToType } from "../src/types/codec-map.ts";
 import { strHash } from "../src/types/hash-spec.ts";
 import { strToType as lit } from "../src/types/codec-str.ts";
@@ -34,7 +34,7 @@ const text = (n: number) =>
 
 // ---------------------------------------------------------------- go semantics
 
-const panic = (m: string) => `H.Panic<"e", [${q(m)}]>`;
+const panic = (m: string) => `["panic", ${q(m)}]`;
 const int = (v: number | bigint) => q(encInt(BigInt(v)));
 
 function goIndex(s: string, i: bigint): string {
@@ -369,6 +369,93 @@ function strTests(): string {
     check(`S.Next<L2, ${int(i)}>`, `[true, ${int(i)}, ${int(r)}, ${int(i + w)}]`);
   }
 
+  // ---- conversions with heap slices ([]byte(s), string(b), []rune(s), string(rs), bytealg)
+  const sliceT = (id: string, off: number, n: number, c: number) =>
+    `[${q(id)}, ${int(off)}, ${int(n)}, ${int(c)}]`;
+  const EMPTY = sliceT("00000", 0, 0, 0);
+  const slot = (h: string, id: string, i: number) =>
+    `H.Load1<${h}, H.PtrMk<${q(id)}, ${int(i)}>, "0">`;
+  const convs = ["", "a", "hello", bytes(31), bytes(300), text(600), bytes(1100, 4)];
+  convs.forEach((s, ci) => {
+    const n = s.length;
+    const sT = n > 200 ? `L${longs.length + ci}` : lit(s);
+    if (n > 200) out.push(`export type L${longs.length + ci} = ${lit(s)};`);
+    const hb = `HB${ci}`;
+    out.push(`export type ${hb} = S.StrToBytes<H.HeapEmpty, ${sT}>;`);
+    const cap = n === 0 ? 0 : roundupsize(n, true);
+    const bv = n === 0 ? EMPTY : sliceT("00001", 0, n, cap);
+    check(`S.StrToBytesV<H.HeapEmpty, ${sT}>`, bv);
+    check(`S.BytesToStr<${hb}, ${bv}>`, sT);
+    if (n > 0) {
+      for (const i of new Set([0, n - 1, ri(n), ri(n)]))
+        check(slot(hb, "00001", i), int(BigInt.asIntN(8, BigInt(s.charCodeAt(i)))));
+      if (cap > n) check(slot(hb, "00001", cap - 1), int(0));
+      const a = ri(n),
+        l = ri(n - a + 1);
+      check(`S.BytesToStr<${hb}, ${sliceT("00001", a, l, cap - a)}>`, lit(s.slice(a, a + l)));
+    }
+    // []rune(s) on top of the bytes (id 00002 when s is not empty)
+    const rs = runes(s);
+    const rn = rs.length;
+    const rcap = rn === 0 ? 0 : Math.floor(roundupsize(rn * 4, true) / 4);
+    const rv = rn === 0 ? EMPTY : sliceT("00002", 0, rn, rcap);
+    const hr = `HR${ci}`;
+    out.push(`export type ${hr} = S.StrToRunes<${hb}, ${sT}>;`);
+    check(`S.StrToRunesV<${hb}, ${sT}>`, rv);
+    check(`S.RunesCnt<${sT}>`, int(rn));
+    check(`S.RunesToStr<${hr}, ${rv}>`, lit(rs.map((r) => encodeRune(r)).join("")));
+    if (rn > 0)
+      for (const i of new Set([0, rn - 1, ri(rn)])) check(slot(hr, "00002", i), int(rs[i]!));
+  });
+  // runes the encoder must replace, written by hand into a slice
+  {
+    const vals = [0x41n, -1n, 0xd800n, 0x10ffffn, 0x110000n, 0xe9n, 2n ** 40n];
+    const h = `H.CopyVals_<S.MakeNoZero<H.HeapEmpty, "8">, ${sliceT("00001", 0, 0, 0)}, [${vals.map(int).join(", ")}], ["0"]>`;
+    check(
+      `S.RunesToStr<${h}, ${sliceT("00001", 0, vals.length, 8)}>`,
+      lit(vals.map(runeStr).join("")),
+    );
+  }
+  // MakeNoZero and strings.Builder.String
+  for (const nz of [0, 1, 5, 24, 1000]) {
+    const c = roundupsize(nz, true);
+    check(`S.MakeNoZeroV<H.HeapEmpty, ${int(nz)}>`, sliceT("00001", 0, nz, c));
+    if (c > 0) check(slot(`S.MakeNoZero<H.HeapEmpty, ${int(nz)}>`, "00001", c - 1), int(0));
+  }
+  for (const s of ["", "built", bytes(400)]) {
+    const n = s.length;
+    const bv = n === 0 ? EMPTY : sliceT("00001", 0, n, roundupsize(n, true));
+    const bid = n === 0 ? "00001" : "00002";
+    const h = `H.Store1<H.AllocLazy<S.StrToBytes<H.HeapEmpty, ${lit(s)}>, "2", null>, H.PtrMk<${q(bid)}, "1">, ${bv}>`;
+    check(`S.BuilderString<${h}, H.PtrMk<${q(bid)}, "0">>`, lit(s));
+  }
+  check(`S.BuilderString<H.AllocLazy<H.HeapEmpty, "2", null>, H.PtrMk<"00001", "0">>`, '""');
+  // bytealg on slices: a at 00001, b at 00002
+  const pairsB: [string, string][] = [
+    ["", ""],
+    ["abc", "abc"],
+    ["abc", "abd"],
+    ["ab", "abc"],
+    ["hello world", "o w"],
+    ["\xff\x00", "\x00"],
+    ["a\xfe\xff\xff", "\xff"],
+  ];
+  for (let k = 0; k < 10; k++) pairsB.push([bytes(ri(40), 4), bytes(ri(3), 4)]);
+  pairsB.forEach(([a, b], pi) => {
+    const h = `HP${pi}`;
+    out.push(`export type ${h} = S.StrToBytes<S.StrToBytes<H.HeapEmpty, ${lit(a)}>, ${lit(b)}>;`);
+    const av = a ? sliceT("00001", 0, a.length, roundupsize(a.length, true)) : "null";
+    const bid = a ? "00002" : "00001";
+    const bv = b ? sliceT(bid, 0, b.length, roundupsize(b.length, true)) : EMPTY;
+    check(`S.BCompare<${h}, ${av}, ${bv}>`, int(cmp(a, b)));
+    check(`S.BEqual<${h}, ${av}, ${bv}>`, String(a === b));
+    check(`S.BIndex<${h}, ${av}, ${bv}>`, int(a.indexOf(b)));
+    const c = b ? b.charCodeAt(0) : 0x61;
+    const cT = int(BigInt.asIntN(8, BigInt(c)));
+    check(`S.BCount<${h}, ${av}, ${cT}>`, int(a.split(String.fromCharCode(c)).length - 1));
+    check(`S.BIndexByte<${h}, ${av}, ${cT}>`, int(a.indexOf(String.fromCharCode(c))));
+  });
+
   out.push("", ...lines, "");
   return out.join("\n");
 }
@@ -556,7 +643,7 @@ function mapTests(): string {
   check("M.MapLen<G5, GM>", '"2"');
   check("M.MapLen<G5, null>", '"0"');
   check("M.MapUpdateCk<GM>", "true");
-  check("M.MapUpdateCk<null>", 'H.Panic<"p", ["assignment to entry in nil map"]>');
+  check("M.MapUpdateCk<null>", '["panic", "assignment to entry in nil map"]');
   check('M.MapDelete<G5, null, "a">', "G5");
   check("M.MapClear<G5, null>", "G5");
   check('M.MapNext<G5, GM, "0", 0, 0>', '[true, "b", "2", "2"]');

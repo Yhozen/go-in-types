@@ -183,14 +183,22 @@ export const rem64u = (a: I64, b: I64): I64 => {
   return canonU(big(a) % big(b));
 };
 const isI32 = (x: I64): x is number => typeof x === "number" && (x | 0) === x;
-export const and64 = (s: boolean) => (a: I64, b: I64): I64 =>
-  isI32(a) && isI32(b) ? a & b : s ? canonS(big(a) & big(b)) : canonU(big(a) & big(b));
-export const or64 = (s: boolean) => (a: I64, b: I64): I64 =>
-  isI32(a) && isI32(b) ? a | b : s ? canonS(big(a) | big(b)) : canonU(big(a) | big(b));
-export const xor64 = (s: boolean) => (a: I64, b: I64): I64 =>
-  isI32(a) && isI32(b) ? a ^ b : s ? canonS(big(a) ^ big(b)) : canonU(big(a) ^ big(b));
-export const andNot64 = (s: boolean) => (a: I64, b: I64): I64 =>
-  isI32(a) && isI32(b) ? a & ~b : s ? canonS(big(a) & ~big(b)) : canonU(big(a) & ~big(b));
+export const and64 =
+  (s: boolean) =>
+  (a: I64, b: I64): I64 =>
+    isI32(a) && isI32(b) ? a & b : s ? canonS(big(a) & big(b)) : canonU(big(a) & big(b));
+export const or64 =
+  (s: boolean) =>
+  (a: I64, b: I64): I64 =>
+    isI32(a) && isI32(b) ? a | b : s ? canonS(big(a) | big(b)) : canonU(big(a) | big(b));
+export const xor64 =
+  (s: boolean) =>
+  (a: I64, b: I64): I64 =>
+    isI32(a) && isI32(b) ? a ^ b : s ? canonS(big(a) ^ big(b)) : canonU(big(a) ^ big(b));
+export const andNot64 =
+  (s: boolean) =>
+  (a: I64, b: I64): I64 =>
+    isI32(a) && isI32(b) ? a & ~b : s ? canonS(big(a) & ~big(b)) : canonU(big(a) & ~big(b));
 
 /** Shift count as a small non-negative number (>= 64 means "all out"); panics if negative. */
 export function shiftCount(s: I64): number {
@@ -204,21 +212,25 @@ export function shiftCount(s: I64): number {
 const P2: number[] = [];
 for (let i = 0; i < 64; i++) P2.push(2 ** i);
 
-export const shl64 = (signed: boolean) => (x: I64, sc: I64): I64 => {
-  const s = shiftCount(sc);
-  if (s >= 64) return 0;
-  if (typeof x === "number" && s < 53) {
-    const r = x * P2[s]!;
-    if (r >= -MAXS && r <= MAXS) return r + 0;
-  }
-  return signed ? canonS(big(x) << BigInt(s)) : canonU(big(x) << BigInt(s));
-};
-export const shr64 = (signed: boolean) => (x: I64, sc: I64): I64 => {
-  const s = shiftCount(sc);
-  if (s >= 64) return signed && x < 0 ? -1 : 0;
-  if (typeof x === "number") return Math.floor(x / P2[s]!) + 0;
-  return signed ? canonS(x >> BigInt(s)) : canonU(x >> BigInt(s));
-};
+export const shl64 =
+  (signed: boolean) =>
+  (x: I64, sc: I64): I64 => {
+    const s = shiftCount(sc);
+    if (s >= 64) return 0;
+    if (typeof x === "number" && s < 53) {
+      const r = x * P2[s]!;
+      if (r >= -MAXS && r <= MAXS) return r + 0;
+    }
+    return signed ? canonS(big(x) << BigInt(s)) : canonU(big(x) << BigInt(s));
+  };
+export const shr64 =
+  (signed: boolean) =>
+  (x: I64, sc: I64): I64 => {
+    const s = shiftCount(sc);
+    if (s >= 64) return signed && x < 0 ? -1 : 0;
+    if (typeof x === "number") return Math.floor(x / P2[s]!) + 0;
+    return signed ? canonS(x >> BigInt(s)) : canonU(x >> BigInt(s));
+  };
 export const neg64s = (x: I64): I64 => (typeof x === "number" ? 0 - x : canonS(-x));
 export const neg64u = (x: I64): I64 => (x === 0 ? 0 : canonU(-big(x)));
 export const not64s = (x: I64): I64 => {

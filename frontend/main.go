@@ -200,7 +200,7 @@ func run(patterns []string) (*Program, *frontend) {
 	}
 	pdir := filepath.Dir(probe[0].GoFiles[0])
 	sfImport := filepath.Join(pdir, "zz_gointypes_softfloat.go")
-	overlay[sfImport] = []byte("package " + probe[0].Name + "\n\nimport _ \"" + softfloatPkg + "\"\n")
+	overlay[sfImport] = []byte("package " + probe[0].Name + "\n\nimport _ \"" + softfloatPkg + "\"\n\n// runtime: the panic value types (errorString, plainError) the reference uses.\nimport _ \"runtime\"\n")
 	if strings.HasSuffix(patterns[len(patterns)-1], ".go") {
 		for i, p := range patterns {
 			if !filepath.IsAbs(p) {

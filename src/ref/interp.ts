@@ -67,6 +67,9 @@ import {
   xor64,
 } from "./values.ts";
 
+/** The one object behind every zero-size allocation (Go's runtime.zerobase). */
+export const ZEROBASE: Obj = [];
+
 export const DM_NONE = 0;
 export const DM_RUN = 1;
 export const DM_PANIC = 2;
@@ -165,7 +168,10 @@ export class Machine {
       for (const b of f.blocks) n += b.instrs.length;
     }
     this.counts = new Float64Array(n);
-    this.globals = prog.globals.map((g) => this.types.zslots(g.type).slice());
+    this.globals = prog.globals.map((g) => {
+      const z = this.types.zslots(g.type);
+      return z.length === 0 ? ZEROBASE : z.slice();
+    });
     this.args = opts.args ?? ["prog"];
   }
 
@@ -532,7 +538,8 @@ function indented(s: string): string {
   return s.replaceAll("\n", "\n\t");
 }
 
-const DEADLOCK = "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine 1 [chan receive]:\n";
+const DEADLOCK =
+  "fatal error: all goroutines are asleep - deadlock!\n\ngoroutine 1 [chan receive]:\n";
 
 /** Decoding context of one function. */
 class Ctx {
@@ -632,6 +639,12 @@ class Ctx {
       case "alloc": {
         const z = T.zslots(ins.elem);
         const dst = ins.dst;
+        if (z.length === 0) {
+          const zb = new Ptr(ZEROBASE, 0);
+          return (f) => {
+            f.regs[dst] = zb;
+          };
+        }
         return (f) => {
           f.regs[dst] = new Ptr(z.slice(), 0);
         };
@@ -1036,8 +1049,12 @@ class Ctx {
     const T = this.types;
     const ti = T.info[ot]!;
     if (kind === "==" || kind === "!=") {
-      const eq = T.eq(ot);
-      const e = eq ?? ((a: any, b: any) => a === b);
+      const eq = ot < 0 ? null : T.eq(ot);
+      const e =
+        eq ??
+        ((a: any, b: any) =>
+          a === b || (a instanceof Ptr && b instanceof Ptr && a.o === b.o && a.i === b.i));
+      if (ot < 0) return kind === "==" ? e : (a, b) => !e(a, b);
       if (ti.k === "bool" || ti.k === "int" || ti.k === "string")
         return kind === "==" ? (a, b) => a === b : (a, b) => a !== b;
       return kind === "==" ? e : (a, b) => !e(a, b);
@@ -1139,8 +1156,7 @@ class Ctx {
     const fi = T.info[from]!;
     const ti = T.info[to]!;
     if (fi.ik && ti.ik) return convInt(fi.ik, ti.ik);
-    if (fi.ik && ti.k === "string")
-      return (x) => encodeRune(typeof x === "bigint" ? -1 : x);
+    if (fi.ik && ti.k === "string") return (x) => encodeRune(typeof x === "bigint" ? -1 : x);
     if (fi.k === "string" && ti.k === "slice") {
       const ek = T.info[(ti.u as any).elem]!.ik;
       if (ek === "uint8" || ek === "int8")
@@ -1154,7 +1170,7 @@ class Ctx {
         };
       return (s: string) => {
         const rs: number[] = [];
-        for (let i = 0; i < s.length; ) {
+        for (let i = 0; i < s.length;) {
           const [r, w] = decodeRune(s, i);
           rs.push(r);
           i += w;
@@ -1284,7 +1300,8 @@ class Ctx {
     const z = isIface ? null : T.zero(at);
     const fail = (v: Iface | null) => {
       const sn = T.name(st);
-      if (v === null) return plainError(`interface conversion: interface is nil, not ${T.name(at)}`);
+      if (v === null)
+        return plainError(`interface conversion: interface is nil, not ${T.name(at)}`);
       if (isIface) {
         const mm = T.missing(v.t, at)!;
         return plainError(
@@ -1392,7 +1409,12 @@ class Ctx {
       const fv = this.r(c.value);
       return (f) => {
         const v = f.regs[fv] as Func | null;
-        push(f, { fn: v === null ? -1 : v.fn, env: v === null ? null : v.env, args: ev(f), bpc: -1 });
+        push(f, {
+          fn: v === null ? -1 : v.fn,
+          env: v === null ? null : v.env,
+          args: ev(f),
+          bpc: -1,
+        });
       };
     }
     if ("invoke" in c) {
@@ -1519,7 +1541,8 @@ class Ctx {
           if (s === null) return 0;
           const n = Math.min(d.len, s.len);
           const cnt = n * es;
-          if (s.o === d.o && s.i < d.i) for (let i = cnt - 1; i >= 0; i--) d.o[d.i + i] = s.o[s.i + i];
+          if (s.o === d.o && s.i < d.i)
+            for (let i = cnt - 1; i >= 0; i--) d.o[d.i + i] = s.o[s.i + i];
           else for (let i = 0; i < cnt; i++) d.o[d.i + i] = s.o[s.i + i];
           return n;
         };

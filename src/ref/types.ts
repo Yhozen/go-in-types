@@ -3,7 +3,17 @@
 // growslice), comparability, equality and map-key canonicalisation.
 import type { Program, Type } from "../ir/types.ts";
 import type { GoMap } from "./gomap.ts";
-import { bitsToF32, bitsToF64, Chan, Func, Iface, Ptr, rtError, type Kind, type Obj } from "./values.ts";
+import {
+  bitsToF32,
+  bitsToF64,
+  Chan,
+  Func,
+  Iface,
+  Ptr,
+  rtError,
+  type Kind,
+  type Obj,
+} from "./values.ts";
 
 export interface TInfo {
   id: number;
@@ -157,9 +167,7 @@ export class Types {
         break;
       case "func": {
         const ps = t.params.map((p, i) =>
-          t.variadic && i === t.params.length - 1
-            ? "..." + this.name(p).slice(2)
-            : this.name(p),
+          t.variadic && i === t.params.length - 1 ? "..." + this.name(p).slice(2) : this.name(p),
         );
         const rs = t.results.map((r) => this.name(r));
         s =
@@ -230,7 +238,11 @@ export class Types {
           al = Math.max(al, a);
         }
         // A struct ending in a zero-size field gets one byte of padding.
-        if (u.fields.length > 0 && this.size(u.fields[u.fields.length - 1]!.type)[0] === 0 && off > 0)
+        if (
+          u.fields.length > 0 &&
+          this.size(u.fields[u.fields.length - 1]!.type)[0] === 0 &&
+          off > 0
+        )
           off += 1;
         r = [Math.ceil(off / al) * al, al];
         break;
@@ -293,8 +305,7 @@ export class Types {
       case "chan":
       case "opaque":
         r = (a, b) =>
-          a === b ||
-          (a instanceof Ptr && b instanceof Ptr && a.o === b.o && a.i === b.i);
+          a === b || (a instanceof Ptr && b instanceof Ptr && a.o === b.o && a.i === b.i);
         break;
       case "interface":
         r = (a, b) => this.ifaceEq(a, b);
@@ -340,10 +351,7 @@ export class Types {
         r = (a) => a;
         break;
       case "float":
-        r =
-          ti.fbits === 32
-            ? (a) => floatKey(bitsToF32(a))
-            : (a) => floatKey(bitsToF64(a));
+        r = ti.fbits === 32 ? (a) => floatKey(bitsToF32(a)) : (a) => floatKey(bitsToF64(a));
         break;
       case "chan":
         r = (a) => a;

@@ -29,7 +29,10 @@ const count = (s: string, c: number) => {
   return n;
 };
 const noop: Intrinsic = () => undefined;
-const ret = (v: any): Intrinsic => () => v;
+const ret =
+  (v: any): Intrinsic =>
+  () =>
+    v;
 const fatal: Intrinsic = (_m, a) => {
   throw new Exit(2, `fatal error: ${a[0]}\n\ngoroutine 1 [running]:\n`);
 };
@@ -72,7 +75,7 @@ export const intrinsics: Record<string, Intrinsic> = {
     return true;
   },
   "sync/atomic.LoadPointer": (_m, [p]) => load(p),
-  "sync/atomic.StorePointer": (_m, [p, v]) => void store(p, v),
+  "sync/atomic.StorePointer": (_m, [p, v]) => store(p, v),
   "sync/atomic.SwapPointer": (_m, [p, v]) => {
     const o = load(p);
     p.o[p.i] = v;
@@ -166,9 +169,26 @@ for (const [suffix, kind] of [
 ] as const) {
   const w64 = kind.endsWith("64");
   const signed = kind[0] === "i";
-  const add = w64 ? (signed ? add64s : add64u) : ((n) => (a: any, b: any) => n(a + b))(norm(kind));
-  const and = w64 ? and64(signed) : ((n) => (a: any, b: any) => n(a & b))(norm(kind));
-  const or = w64 ? or64(signed) : ((n) => (a: any, b: any) => n(a | b))(norm(kind));
+  const add = w64
+    ? signed
+      ? add64s
+      : add64u
+    : (
+        (n) => (a: any, b: any) =>
+          n(a + b)
+      )(norm(kind));
+  const and = w64
+    ? and64(signed)
+    : (
+        (n) => (a: any, b: any) =>
+          n(a & b)
+      )(norm(kind));
+  const or = w64
+    ? or64(signed)
+    : (
+        (n) => (a: any, b: any) =>
+          n(a | b)
+      )(norm(kind));
   const P = "sync/atomic.";
   intrinsics[P + "Add" + suffix] = (_m, [p, d]) => {
     const v = add(load(p), d);
@@ -191,7 +211,7 @@ for (const [suffix, kind] of [
     return true;
   };
   intrinsics[P + "Load" + suffix] = (_m, [p]) => load(p);
-  intrinsics[P + "Store" + suffix] = (_m, [p, v]) => void store(p, v);
+  intrinsics[P + "Store" + suffix] = (_m, [p, v]) => store(p, v);
   intrinsics[P + "Swap" + suffix] = (_m, [p, v]) => {
     const o = load(p);
     p.o[p.i] = v;

@@ -7,7 +7,7 @@
 //   objects  by id: { k: "o", s: [slot values] } memory object,
 //            { k: "m", t, e: [[key, value, seq]...], n: nextSeq } map,
 //            { k: "c", t, cap, closed, b: [values] } channel
-//   globals  object id of each global
+//   globals  object id of each global (-1: the shared zero-size object)
 //   frames   bottom to top: { fn, pc, dst, d (isDefer), dm (defer mode),
 //            p (panic index or -1), r (registers), df (defers) }
 //   panics   [{ v, link, rec, rep, depth, s? }]
@@ -23,7 +23,7 @@
 // frames; restoring and snapshotting again gives the same JSON.
 import type { Program } from "../ir/types.ts";
 import { GoMap, MapIter } from "./gomap.ts";
-import { type Defer, Frame, Machine, type PanicRec } from "./interp.ts";
+import { type Defer, Frame, Machine, type PanicRec, ZEROBASE } from "./interp.ts";
 import { Chan, Func, Iface, Ptr, Slice, StrIter } from "./values.ts";
 
 export const SNAPSHOT_FORMAT = "go-in-types/ref-snapshot@1";
@@ -42,6 +42,7 @@ export function snapshot(m: Machine, path: string): any {
   const objs: any[] = [];
   const queue: object[] = [];
   const id = (o: object): number => {
+    if (o === ZEROBASE) return -1;
     let i = ids.get(o);
     if (i === undefined) {
       i = objs.length;
@@ -164,13 +165,14 @@ export function restore(prog: Program, s: any): Machine {
     if (o.k === "c") return new Chan(o.t, o.cap);
     return new Array(o.s.length);
   });
+  const sh = (i: number) => (i < 0 ? ZEROBASE : shells[i]);
   const dec = (v: any): any => {
     if (v === null || typeof v !== "object") return v;
     if (Array.isArray(v)) return v.map(dec);
     if ("u" in v) return undefined;
     if ("n" in v) return BigInt(v.n);
-    if ("p" in v) return new Ptr(shells[v.p], v.i);
-    if ("s" in v) return new Slice(shells[v.s], v.i, v.l, v.c);
+    if ("p" in v) return new Ptr(sh(v.p), v.i);
+    if ("s" in v) return new Slice(sh(v.s), v.i, v.l, v.c);
     if ("f" in v) return new Func(v.f, v.e.map(dec));
     if ("t" in v) return new Iface(v.t, dec(v.v));
     if ("m" in v) return shells[v.m];
@@ -189,7 +191,7 @@ export function restore(prog: Program, s: any): Machine {
       (sh as Chan).buf = o.b.map(dec);
     } else for (let j = 0; j < o.s.length; j++) sh[j] = dec(o.s[j]);
   });
-  m.globals = s.globals.map((g: number) => shells[g]);
+  m.globals = s.globals.map((g: number) => sh(g));
   const panics: PanicRec[] = s.panics.map((p: any) => ({
     v: dec(p.v),
     link: null,

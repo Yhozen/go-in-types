@@ -2,7 +2,10 @@
 // front end -> reference -> compare with the .out file; then the fuzzer;
 // then the snapshot test (pause at several op counts, resume from the JSON
 // snapshot in a fresh process, same output and op total).
-//   node scripts/gate-ref.ts [--fuzz N] [--seed S] [--no-snapshot] [filter...]
+//   node scripts/gate-ref.ts [--fuzz N] [--seed S] [--no-snapshot] [--slow] [filter...]
+//
+// Slow tier: programs in SLOW run only with --slow (with their own timeout,
+// no snapshot test); without it they are listed as skipped in the table.
 //
 // Failures are classified:
 //   front end  the front end failed on the program
@@ -27,6 +30,12 @@ const filters = argv.filter(
 );
 const nFuzz = opt("--fuzz", 100);
 const doSnap = !argv.includes("--no-snapshot");
+const doSlow = argv.includes("--slow");
+
+/** Slow tier: corpus program -> reference timeout (ms) and why it is slow. */
+const SLOW: Record<string, { timeoutMs: number; why: string }> = {
+  "gotest/divmod.go": { timeoutMs: 20 * 60_000, why: "~4.6G ops (exhaustive 8/16-bit div/mod)" },
+};
 
 interface Row {
   name: string;
@@ -46,7 +55,9 @@ function classify(got: string): string {
 
 async function main() {
   await ensureOverlay();
-  const files = corpus(filters);
+  const all = corpus(filters);
+  const skipped = doSlow ? [] : all.filter((f) => f in SLOW);
+  const files = all.filter((f) => !skipped.includes(f));
   const irDir = join(repo, ".run/gate/ir");
   const rows = await pool(files, Math.max(2, cpus().length - 2), async (f): Promise<Row> => {
     const outFile = join(corpusDir, f.replace(/\.go$/, ".out"));
@@ -55,9 +66,10 @@ async function main() {
     const want = readFileSync(outFile, "latin1");
     try {
       const prog = await frontend(join(corpusDir, f), join(irDir, dirname(f)));
-      const r = await reference(prog);
+      const r = await reference(prog, SLOW[f]?.timeoutMs);
       const got = formatOut(r.stdout, r.stderr, r.exit);
-      if (got === want) return { name: f, ok: true, ops: r.ops, prog, out: got };
+      if (got === want)
+        return { name: f, ok: true, ops: r.ops, prog: f in SLOW ? undefined : prog, out: got };
       return { name: f, ok: false, cls: classify(got), detail: firstDiff(want, got) };
     } catch (e) {
       if (e instanceof StageError) return { name: f, ok: false, cls: e.stage, detail: e.message };
@@ -121,6 +133,19 @@ async function main() {
   console.log(line("hand-written", hand, tally(hand)));
   console.log(line("$GOROOT/test", gotest, tally(gotest)));
   if (other.length) console.log(line("kept fuzz cases", other, tally(other)));
+  const slowRun = rows.filter((r) => r.name in SLOW);
+  if (slowRun.length)
+    console.log(
+      line(
+        "slow tier (in the rows above)",
+        slowRun,
+        slowRun.map((r) => `${r.name}: ${r.ok ? `${r.ops} ops` : "FAIL"}`).join(", "),
+      ),
+    );
+  if (skipped.length)
+    console.log(
+      `| slow tier | skipped | ${skipped.map((f) => `${f} (${SLOW[f]!.why}; --slow)`).join(", ")} |`,
+    );
   if (doSnap) console.log(line("snapshot resume", snapRows, tally(snapRows)));
   if (nFuzz > 0) console.log(line(`fuzz (seeds ${opt("--seed", 1)}..)`, fz, tally(fz as any)));
   const allOk = rows.every((r) => r.ok) && snapRows.every((r) => r.ok) && fz.every((r) => r.ok);

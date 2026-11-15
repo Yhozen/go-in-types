@@ -24,27 +24,29 @@ by a tuple pattern.
 Between chunks (and between trampoline steps inside a chunk) the machine is
 one 7-tuple, built by `rt.ts` `St<Tag, Key, H, K, X, A, F>`:
 
-| index | name | meaning                                                                    |
-| ----: | ---- | -------------------------------------------------------------------------- |
-|     0 | Tag  | what the driver does next (below)                                          |
-|     1 | Key  | for `"j"`: the entry to resume (a key of the program's entry table)        |
-|     2 | H    | the heap (`src/types/heap.ts`; globals are its first objects)              |
-|     3 | K    | the call stack: `null` or `[Cont, K]` (top first)                          |
-|     4 | X    | machine extras `[Out, Err, Pn]`: stdout so far, stderr so far, panic chain |
-|     5 | A    | the tag's argument (below)                                                 |
-|     6 | F    | fuel left in this chunk (a string of `x`; see "Fuel")                      |
+| index | name | meaning                                                                                    |
+| ----: | ---- | ------------------------------------------------------------------------------------------ |
+|     0 | Tag  | what the driver does next (below)                                                          |
+|     1 | Key  | for `"j"`: the entry to resume (a key of the program's entry table)                        |
+|     2 | H    | the heap (`src/types/heap.ts`; globals are its first objects)                              |
+|     3 | K    | the call stack: `null` or `[Cont, K]` (top first)                                          |
+|     4 | X    | machine extras `[Out, Err, Pn, Ns]` (`Xt`): stdout, stderr, panic chain, next panic serial |
+|     5 | A    | the tag's argument (below)                                                                 |
+|     6 | F    | fuel left in this chunk (a string of `x`; see "Fuel")                                      |
 
 Tags and their `A`:
 
 - `"j"`: resume entry `Key` with `A` (entry-specific: the saved registers
-  of a block entry, or `[value, Regs, D]` for a call's return point).
+  of a block or mid-block entry, or `[value, Regs, D]` for a call's return
+  point; the sidecar entry table gives each layout, "Entries" below).
 - `"c"`: call a function: `A = [Fid, Args, Env]` (Fid an int, Args the
   argument tuple, Env the closure's free variables, `[]` for none). The
   caller's continuation is already on K.
 - `"r"`: return `A` (the result: one value, a tuple for several, `null` for
   none) to the continuation on top of K.
 - `"p"`: panic with value `A[0]` (an interface value) in the running frame,
-  whose frame is `A[1]` = `[Key, Regs, D, Fid]` (as a continuation's fields).
+  whose frame is `A[1]` = `["", RRegs, D, Fid]`: the frame's recover-block
+  registers (or `[]`), defer list and function id.
 - `"x"`: the run is over; `A` is the exit status (a number literal type).
   Final.
 
@@ -94,10 +96,18 @@ packed into a tuple in the order of the entry it will resume at.
 
 `Pn` (in X) is the panic chain, newest first: `null` or `[Rec, Pn]` with
 `Rec = [V, Recovered, Repanicked, Depth, Serial, Str]`, the reference's
-`PanicRec` (src/ref/interp.ts) with `Depth` the stack depth (length of K)
-of the frame unwinding it and `Str` the printed `Error()`/`String()` result
-(or `null`). Runtime errors are interface values of `runtime.errorString`
-/ `runtime.plainError` holding the message (DESIGN.md), as the reference.
+`PanicRec` (src/ref/interp.ts): `Recovered`/`Repanicked` booleans, `Depth`
+the stack depth of the frame unwinding it (a string of `x`, one per
+continuation below it), `Serial` the panic's serial (`"s"`, `"sx"`,
+`"sxx"`, ...; `Ns` in X is the next one, `"s"` in a fresh state) and `Str`
+the printed `Error()`/`String()` result (or `null`). A `"d"` continuation's
+`Mode` is the serial of the panic it unwinds. Runtime errors are interface
+values of `runtime.errorString` / `runtime.plainError` holding the message
+(DESIGN.md), as the reference.
+
+`deferstack` values (range-over-func) are the frame's stack index as an
+int (the reference's: frames below it; `R.StackIx<K>`); a defer onto
+another frame updates that frame's continuation in K (`R.DeferAt`).
 
 ### Output
 
@@ -111,12 +121,19 @@ Globals are heap objects 1..n in `Program.globals` order (heap.ts header);
 a global's address is `[id, "0"]`, a constant in the emitted code. The
 initial heap is `codec-heap.ts` `initialHeap`.
 
+Map keys are canonical strings (map.ts): ints and strings as themselves,
+bools `t`/`f`, pointers `id.slot`, floats their bits with -0 as 0 and a
+NaN as `n<seq>` (unique per insert, never found by a lookup), interfaces
+`${T}|${form}` by the dynamic type's equality kind (or the "hash of
+unhashable type" panic), structs and arrays the slot forms joined by `,`
+(strings length-prefixed `${len}:${s}`).
+
 ## The run protocol
 
 The emitted module exports (names are prefixed, default prefix `G`):
 
 - `GS0`: the start state (init, then main, from the zeroed initial heap):
-  `St<"c", "", Heap0, [Ct<"m",…>, [Ct<"b",…>, null]], ["", "", null], [InitFid, [], []], "">`.
+  `St<"c", "", Heap0, [Ct<"m",…>, [Ct<"b",…>, null]], Xt<"", "", null, "s">, [InitFid, [], []], "">`.
 - `GChunk<S>`: one chunk: refuel `S` (`F` := the chunk fuel) and run
   trampoline steps until the fuel is spent or the run is over. A finished
   state is returned unchanged.
@@ -135,22 +152,63 @@ per statement):
     ...
 
 Starting from any state: build `S` with tag `"j"` at the entry of the
-paused frame, or tag `"r"`/`"c"` at a call boundary; the codec (run agent)
-converts a reference snapshot into such a state. Every block entry and
-every call's return point is an entry, so a pause at any block boundary or
-call is a valid start.
+paused frame, or tag `"r"`/`"c"` at a call boundary; the codec
+(src/types/codec-state.ts) converts a reference snapshot into such a state.
+Every block start, every fuel point inside a block and every call's return
+point is an entry, so a pause at any of them is a valid start (not yet: a
+frame running its defers on top, or a panic in flight).
+
+The module imports its runtime from a directory of declaration files
+(`src/emit/runtime.ts` `writeRuntime`: `rt.d.ts`, `chacha.d.ts`,
+`fuel.gen.d.ts` and copies of src/types as `int.d.ts`, `heap.d.ts`, ...;
+default `<out dir>/rt`): a `.d.ts` loads lazily under `--skipLibCheck`,
+while a `.ts` runtime is checked in full (~4M instantiations, 8 s).
+
+### Entries
+
+The emitter's sidecar entry table (`emit(prog, opts, stats, entries)`;
+`scripts/emit.ts` writes `<out>.entries.json`) lists every entry as
+`EntryInfo` (src/emit/emit.ts):
+
+- `key`, `fid`; `kind`: `"block"` (`b<fid>_<blk>`, a block's start),
+  `"mid"` (`b<fid>_<blk>_<k>`, a fuel point inside a block), `"call"`
+  (`c<fid>_<n>`, a call's or runDefers' return point), `"recover"`
+  (`r<fid>`).
+- `block`, `pc`: the flattened instruction index of the next instruction
+  (block, mid, recover) or of the call (call: the frame resumes at pc+1).
+- `regs`: block/mid: the register of `A[i]` (-1: D); call: the register of
+  `Regs[i]` (`A = [result, Regs, D]`); recover: of `Regs[i]`.
+- `hasD`, and `dst` (call: the result register or -1).
 
 ## Fuel
 
 `F` is a string of `x` characters. A chunk starts with `FUEL` (900)
-characters. Entering a block spends its weight, at least 1 character per
-segment alias it runs, plus about one per 1,000 estimated instantiations
-of its ops (per-op estimates from the stage 4 cost tables); each
-trampoline step spends 1. A block whose weight is more than the fuel left
+characters. A block is one or more fuel groups (a group ends after ~40,000
+estimated instantiations or 40 segments, and at a call's return point);
+entering a group spends its weight, at least 1 character per segment alias
+it runs, plus one per 1,000 estimated instantiations of its ops (per-op
+estimates; aggregates add n(40 + 4n) for n slots), at most 880. Each
+trampoline step spends 1. A group whose weight is more than the fuel left
 yields (`"j"` at its entry) and the chunk ends. So a chunk runs at most
 ~900 alias hops (under tsrs's ~1,000 tail-call limit) and, by the
-estimates, ~1M instantiations.
+estimates, ~1M instantiations. Hovers draw a fresh fuel literal from the
+pool (`fuel.gen.ts`) before every chunk (`GExec`).
+
+A chain of blocks comparing one int or string register with constants
+(go/ssa's `switch`) is one dispatch: the value indexes an interface of
+case entries (`SW<fid>_<blk>`, each `sw…` jumps to its case), the default
+jumps on.
 
 ## Changes
 
-- (none yet)
+- `X` is `Xt<Out, Err, Pn, Ns>` (4 fields; `Ns` the next panic serial);
+  panic records carry the serial and the printed text; the `"p"` frame is
+  `["", RRegs, D, Fid]`.
+- The runtime is a directory of `.d.ts` files (`writeRuntime`), not
+  src/emit/rt.ts directly; `chacha.d.ts` (chacha8rand.block) joined it.
+- Fuel groups: blocks have mid-block entries `b<fid>_<blk>_<k>`.
+- The sidecar entry table (`<out>.entries.json`, "Entries"); the codec
+  reads it.
+- deferstack values are stack indices (ints); the codec's init-time stack
+  is `[m, [b, null]]` as in `GS0`.
+- Map keys: floats and interfaces (above).

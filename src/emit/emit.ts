@@ -10,7 +10,7 @@
 // yield to the driver (return, dynamic call, panic, fuel out).
 import type { Block, Func, Instr, Operand, Program, Type } from "../ir/types.ts";
 import { Types } from "../ref/types.ts";
-import { encNat, globalIds, initialHeap, progTables, strLit } from "../types/codec-heap.ts";
+import { decNat, encNat, globalIds, initialHeap, progTables, strLit } from "../types/codec-heap.ts";
 import { def, edgeIndex, liveness, uses } from "./live.ts";
 
 export interface EmitOptions {
@@ -31,8 +31,13 @@ export interface EmitOptions {
 export interface EntryInfo {
   key: string;
   fid: number;
-  /** "block": a block's start; "mid": inside a block (a fuel point); "call": a call's return point; "recover": the recover block */
-  kind: "block" | "mid" | "call" | "recover";
+  /**
+   * "block": a block's start; "mid": inside a block (a fuel point); "call":
+   * a call's return point; "recover": the recover block; "switch": a case of
+   * a switch dispatch (`s<fid>_<blk>`: as if at the case block's compare,
+   * which then holds; A also holds values dead there; not a start point)
+   */
+  kind: "block" | "mid" | "call" | "recover" | "switch";
   /** block index (block, mid, recover) or the call's block */
   block: number;
   /** flattened instruction index: the next instruction to run (block, mid, recover) or the call / runDefers instruction (call) */
@@ -93,7 +98,7 @@ export function emit(
 ): string {
   const em = new Emitter(prog, opts);
   const out = em.run(stats);
-  if (entries) entries.push(...em.entryTable);
+  if (entries) for (const x of em.entryTable) entries.push(x);
   return out;
 }
 
@@ -242,6 +247,13 @@ class Emitter {
     tail.push(`interface PK { ${pk.join(" ")} }`);
     tail.push(`interface ZR { ${zr.join(" ")} }`);
     tail.push(`interface RC { ${rc.join(" ")} }`);
+    // panic tails of frames without recover registers (SegB.pnH)
+    tail.push(
+      `type PH<H, K, X, F, C, D, Fid> = R.Pc<H, K, X, F, R.HPanicV<C, ${this.ES}, ${this.PE}>, ["", [], D, Fid]>;`,
+    );
+    tail.push(
+      `type PN<H, K, X, F, D, Fid> = R.Pc<H, K, X, F, [${this.ES}, "invalid memory address or nil pointer dereference"], ["", [], D, Fid]>;`,
+    );
     tail.push(
       `interface Prog { e: E; pk: PK; zr: ZR; rc: RC; p: P; mErr: ${this.methodTabs.has("Error") ? "Mt_Error" : "{}"}; mStr: ${this.methodTabs.has("String") ? "Mt_String" : "{}"}; es: ${this.ES}; fuel: ${this.o.fuel ? '"' + "x".repeat(this.o.fuel) + '"' : "R.FUEL"}; }`,
     );
@@ -803,6 +815,26 @@ class SegB {
     return g.body === "intrinsic" && (g.intrinsic ?? g.name) === "internal/chacha8rand.block";
   }
 
+  /** Names (and pointer expressions) known non-nil: checked, or fresh / derived addresses. */
+  nonNil = new Set<string>();
+  /** Whether a check is known to pass (and records what a passing check proves). */
+  statically(ck: string): boolean {
+    const nil = /^Hp\.NilCk<(.*)>$/.exec(ck);
+    if (nil) {
+      const x = nil[1]!;
+      if (this.nonNil.has(x) || NONNIL.test(x)) return true;
+      // only names: an expression's text (H, ...) means another value in a later segment
+      if (/^[A-Za-z_]\w*$/.test(x)) this.nonNil.add(x);
+      return false;
+    }
+    const ix = /^Hp\.IndexCk<"([0-9a-f]+)", "([0-9a-f]+)">$/.exec(ck);
+    if (ix) {
+      const i = decNat(ix[1]!);
+      return i >= 0n && i < decNat(ix[2]!);
+    }
+    return false;
+  }
+
   fresh(): string {
     return `v${this.tmp++}`;
   }
@@ -844,10 +876,24 @@ class SegB {
     this.Fv = 'this["f"]';
     const tab = `SW${fe.fid}_${sw.cases[0]!.blk}`;
     const props: string[] = [];
-    sw.cases.forEach((c, j) => {
-      const nm = `sw${fe.fid}_${c.blk}_${j}`;
-      this.e.out.push(`interface ${nm} extends EB { o: ${this.jumpTo(c.blk, 0)} }`);
-      props.push(`${c.key}: ${nm};`);
+    // each case is an entry `s<fid>_<blk>` (the dispatch goes through the
+    // trampoline: an entry evaluated in a segment's tail would nest, not loop)
+    const fpc = fe.blockStart;
+    sw.cases.forEach((c) => {
+      const key = `s${fe.fid}_${c.blk}`;
+      const n = fe.f.blocks[c.blk]!.instrs.length;
+      this.e.entryTable.push({
+        key,
+        fid: fe.fid,
+        kind: "switch",
+        block: c.blk,
+        pc: fpc[c.blk]! + n - 2,
+        regs,
+        hasD: regs.includes(D_REG),
+      });
+      this.e.out.push(`interface e${key} extends EB { o: ${this.jumpTo(c.blk, 0)} }`);
+      this.e.entries.push(`${key}: e${key};`);
+      props.push(`${c.key}: "${key}";`);
     });
     this.env = saved.env;
     this.H = saved.H;
@@ -856,7 +902,7 @@ class SegB {
     this.Fv = saved.F;
     this.e.out.push(`interface ${tab} { ${props.join(" ")} }`);
     this.end(
-      `${x} extends keyof ${tab} ? (${tab}[${x}] & R.EA<${this.H}, ${this.K}, ${this.X}, ${this.Fv}, [${avals.join(", ")}]>)["o"] : ${def}`,
+      `${x} extends keyof ${tab} ? R.Y<${tab}[${x}], ${this.H}, ${this.K}, ${this.X}, [${avals.join(", ")}], ${this.Fv}> : ${def}`,
     );
   }
   /** An operand as an atom (binding its expression if needed). */
@@ -870,6 +916,7 @@ class SegB {
   /** Binds an expression to a fresh name (cuts first when out of bindings). */
   bind(expr: string): string {
     const nm = this.fresh();
+    if (NONNIL.test(expr)) this.nonNil.add(nm);
     this.pre.push(`${ckParen(expr)} extends infer ${nm} ? `);
     this.post.push(` : never`);
     this.binds++;
@@ -901,6 +948,7 @@ class SegB {
   }
   /** A runtime check: `Ck extends true ? <rest> : <panic from Ck>`. */
   check(ck: string, panic: (r: string) => string) {
+    if (this.statically(ck)) return;
     this.pre.push(`${ckParen(ck)} extends true ? `);
     this.post.push(` : ${panic(ck)}`);
   }
@@ -937,6 +985,13 @@ class SegB {
   }
   /** Panic from a heap.ts `Panic<K, M>`. */
   pnH(r: string): string {
+    // short forms (size): the frame has no recover registers
+    if (this.fe.rregs.length === 0) {
+      const d = this.fe.hasD ? this.dText() : "null";
+      const tail = `${this.H}, ${this.K}, ${this.X}, ${this.Fv}`;
+      if (r.startsWith("Hp.NilCk<")) return `PN<${tail}, ${d}, ${n2(this.fe.fid)}>`;
+      return `PH<${tail}, ${r}, ${d}, ${n2(this.fe.fid)}>`;
+    }
     return this.panicState(`R.HPanicV<${r}, ${this.e.ES}, ${this.e.PE}>`);
   }
   rtErr(msg: string): string {
@@ -2165,6 +2220,8 @@ interface SwitchChain {
   /** the last block of the chain (its "else" edge is the default) */
   last: number;
 }
+/** Address expressions that are never nil (a fresh object, or derived from a checked pointer). */
+const NONNIL = /^Hp\.(PtrMk<Hp\.NextId<|FieldAddr<|ArrayIndexAddr<|SliceIndexAddr<)/;
 /** Fewest cases worth a table dispatch. */
 const SWITCH_MIN = 4;
 

@@ -145,7 +145,7 @@ export function entries(prog: Program, src: string | EntryInfo[]): Entries {
   const site = new Map<string, string>();
   const pcOf = new Map<string, number>();
   for (const e of src) {
-    if (e.kind === "recover") continue;
+    if (e.kind === "recover" || e.kind === "switch") continue;
     lays.set(e.key, { key: e.key, regs: e.regs, hasD: e.hasD });
     pcOf.set(e.key, e.pc);
     if (e.kind === "call") site.set(`${e.fid}:${e.pc}`, e.key);

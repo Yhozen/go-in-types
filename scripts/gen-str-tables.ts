@@ -4,7 +4,9 @@
 //
 // Run by scripts/gen-strmap.ts (`vp run gen:strmap`).
 import { strToType as tsLit } from "../src/types/codec-str.ts";
-import { encInt } from "../src/types/strmap-int.ts";
+import { encodeInt64 } from "../src/types/codec-int.ts";
+
+const encInt = (v: bigint | number) => encodeInt64(BigInt.asIntN(64, BigInt(v)));
 
 const HEX = "0123456789abcdef".split("");
 const N256 = Array.from({ length: 256 }, (_, i) => i);
@@ -242,29 +244,6 @@ export function strTablesSource(): string {
       "FUEL",
       "Loop fuel: n -> n - 1 (decimal, 1..1000).",
       Array.from({ length: 1000 }, (_, i): [string, string] => [String(i + 1), q(String(i))]),
-      true,
-    ),
-    table(
-      "NOT",
-      "A nibble -> its complement.",
-      HEX.map((h, i): [string, string] => [h, q(HEX[15 - i]!)]),
-      true,
-    ),
-    table(
-      "DM16",
-      "Decimal digit d and nibble c -> the digit and carry nibble of d * 16 + c.",
-      Array.from({ length: 160 }, (_, i): [string, string] => {
-        const d = Math.floor(i / 16);
-        const c = i % 16;
-        const v = d * 16 + c;
-        return [String(d) + HEX[c]!, q(String(v % 10) + HEX[Math.floor(v / 10)]!)];
-      }),
-      true,
-    ),
-    table(
-      "DEC1",
-      "A nibble -> its decimal digits, least significant first.",
-      HEX.map((h, i): [string, string] => [h, q(String(i).split("").reverse().join(""))]),
       true,
     ),
   );

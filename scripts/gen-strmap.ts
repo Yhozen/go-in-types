@@ -5,11 +5,12 @@
 import { writeFileSync } from "node:fs";
 import { decodeRune, encodeRune } from "../src/ref/values.ts";
 import { strToType as lit } from "../src/types/codec-str.ts";
-import { encInt } from "../src/types/strmap-int.ts";
+import { encodeInt64 } from "../src/types/codec-int.ts";
 import { strTablesSource } from "./gen-str-tables.ts";
 
 const root = new URL("..", import.meta.url).pathname;
 const q = (s: string) => JSON.stringify(s);
+const encInt = (v: bigint | number) => encodeInt64(BigInt.asIntN(64, BigInt(v)));
 
 /** Deterministic PRNG (mulberry32). */
 function rng(seed: number) {
@@ -113,6 +114,24 @@ function strTests(): string {
     for (const i of is) check(`S.Index<${lit(s)}, ${int(i)}>`, goIndex(s, i));
   }
   check(`S.Index<"", "0">`, goIndex("", 0n));
+  // Unsigned indices: negative-looking forms are huge values.
+  for (const [k, w] of [
+    ["u8", 8],
+    ["u16", 16],
+    ["u32", 32],
+    ["u64", 64],
+  ] as const) {
+    const s = bytes(300);
+    for (const v of [0n, 5n, 299n, 300n, (1n << BigInt(w)) - 1n, 1n << BigInt(w - 1)]) {
+      const u = BigInt.asUintN(w, v);
+      check(`S.Index<${lit(s)}, ${int(BigInt.asIntN(w, u))}, "${k}">`, goIndex(s, u));
+      check(`S.Slice<${lit(s)}, ${int(BigInt.asIntN(w, u))}, null, "${k}">`, goSlice(s, u, null));
+      check(
+        `S.Slice<${lit(s)}, null, ${int(BigInt.asIntN(w, u))}, "i64", "${k}">`,
+        goSlice(s, null, u),
+      );
+    }
+  }
   longs.forEach((s, li) => {
     const is = [
       0n,

@@ -13,10 +13,11 @@
 // by the nibbles of the offset, built once per distinct string and memoized
 // by the checker's alias-instantiation cache, so a byte read costs a few
 // indexed accesses once it exists.
+import type * as I from "./int.ts";
 import type * as K from "./str-tables.gen.ts";
 
-/** A runtime panic (runtime.errorString with this message) returned by an operation. */
-export type Panic<M extends string> = ["panic", M];
+/** A runtime panic (runtime.errorString with this message) returned by an operation (int.ts's). */
+export type Panic<M extends string> = I.Panic<M>;
 
 type NegNib = "8" | "9" | "a" | "b" | "c" | "d" | "e" | "f";
 
@@ -120,49 +121,6 @@ type NCmpL<A extends string, B extends string, F extends string> = A extends `${
 
 /** a < b for canonical a, b >= 0. */
 export type NLt<A extends string, B extends string> = NCmp<A, B> extends "<" ? true : false;
-
-// ---- decimal (panic messages only)
-
-/** Decimal digits (least significant first) times 16 plus nibble c. */
-type DecMul<
-  D extends string,
-  C extends string,
-  O extends string = "",
-> = D extends `${infer d}${infer DR}`
-  ? K.DM16[`${d}${C}`] extends `${infer x}${infer c}`
-    ? DecMul<DR, c, `${O}${x}`>
-    : never
-  : C extends "0"
-    ? O
-    : `${O}${K.DEC1[C]}`;
-type Rev<S extends string, O extends string = ""> = S extends `${infer a}${infer R}`
-  ? Rev<R, `${a}${O}`>
-  : O;
-type DecU<U extends string, D extends string = ""> = U extends `${infer h}${infer R}`
-  ? DecU<R, DecMul<D, h>>
-  : D;
-/** Magnitude of a negative canonical integer as an unsigned nibble string (least significant first). */
-type NegMag<A extends string> = NegInc<NotAll<`${A}ffffffffffffffff`, "", "">>;
-type NotAll<A extends string, O extends string, N extends string> = N extends "ffffffffffffffff"
-  ? O
-  : A extends `${infer a}${infer R}`
-    ? NotAll<R, `${O}${K.NOT[a]}`, `${N}f`>
-    : O;
-type NegInc<A extends string, O extends string = ""> = A extends `${infer a}${infer R}`
-  ? a extends "f"
-    ? NegInc<R, `${O}0`>
-    : `${O}${SUCC[a & keyof SUCC]}${R}`
-  : O;
-/** The signed decimal text of an integer (for panic messages). */
-export type ToDec<A extends string> =
-  IsNeg<A> extends true ? `-${DecOf<StripZ<NegMag<A>>>}` : DecOf<StripZ<A>>;
-type DecOf<U extends string> = U extends ""
-  ? "0"
-  : Rev<DecU<Rev<U>>> extends infer D extends string
-    ? D extends ""
-      ? "0"
-      : D
-    : never;
 
 // ---------------------------------------------------------------- length
 
@@ -519,23 +477,46 @@ type SuffixFrom<C extends CharsT, P extends string> =
     : never;
 
 /**
- * `s[l:h]` (L, H canonical integers; null when omitted), or the bounds panic
- * Go raises (checked in Go's order: h, then l).
+ * `s[l:h]` (L, H integers of kinds KL, KH; null when omitted), or the bounds
+ * panic Go raises (checked in Go's order: h, then l).
  */
-export type Slice<S extends string, L extends string | null, H extends string | null> =
+export type Slice<
+  S extends string,
+  L extends string | null,
+  H extends string | null,
+  KL extends I.W = "i64",
+  KH extends I.W = "i64",
+> =
   Len<S> extends infer N extends string
-    ? SliceH<S, N, L extends string ? L : "0", H extends string ? H : N>
+    ? H extends string
+      ? SliceH<S, N, L extends string ? L : "0", Pos<KH, H>, KL, KH, L extends string ? L : "0", H>
+      : SliceH<S, N, L extends string ? L : "0", N, KL, "i64", L extends string ? L : "0", N>
     : never;
-type SliceH<S extends string, N extends string, L extends string, H extends string> =
+type SliceH<
+  S extends string,
+  N extends string,
+  L extends string,
+  H extends string,
+  KL extends I.W,
+  KH extends I.W,
+  L0 extends string,
+  H0 extends string,
+> =
   IsNeg<H> extends true
-    ? Panic<`slice bounds out of range [:${ToDec<H>}]`>
+    ? Panic<`slice bounds out of range [:${I.ToDec<KH, H0>}]`>
     : NLt<N, H> extends true
-      ? Panic<`slice bounds out of range [:${ToDec<H>}] with length ${ToDec<N>}`>
-      : IsNeg<L> extends true
-        ? Panic<`slice bounds out of range [${ToDec<L>}:]`>
-        : NLt<H, L> extends true
-          ? Panic<`slice bounds out of range [${ToDec<L>}:${ToDec<H>}]`>
-          : SliceOk<S, N, L, H>;
+      ? Panic<`slice bounds out of range [:${I.ToDec<KH, H0>}] with length ${I.ToDec<"i64", N>}`>
+      : Pos<KL, L> extends infer LP extends string
+        ? IsNeg<LP> extends true
+          ? Panic<`slice bounds out of range [${I.ToDec<KL, L0>}:]`>
+          : NLt<H, LP> extends true
+            ? Panic<`slice bounds out of range [${I.ToDec<KL, L0>}:${I.ToDec<KH, H0>}]`>
+            : SliceOk<S, N, LP, H>
+        : never;
+/** An index of kind K as a signed form (unsigned values zero-extended, so they are never negative). */
+type Pos<K extends I.W, A extends string> = K extends "i64" | "i32" | "i16" | "i8"
+  ? A
+  : I.ZExt<K, A>;
 type SliceOk<S extends string, N extends string, L extends string, H extends string> = L extends H
   ? ""
   : H extends N
@@ -550,17 +531,19 @@ type SliceOk<S extends string, N extends string, L extends string, H extends str
 
 // ---------------------------------------------------------------- bytes
 
-/** `s[i]`: the byte at offset I (a uint8), or the index panic. */
-export type Index<S extends string, I extends string> =
-  IsNeg<I> extends true
-    ? Panic<`index out of range [${ToDec<I>}]`>
-    : S extends ""
-      ? Panic<`index out of range [${ToDec<I>}] with length 0`>
-      : Chars<S> extends infer C extends CharsT
-        ? At<C, I> extends infer c extends string
-          ? K.CODE[c]
-          : Panic<`index out of range [${ToDec<I>}] with length ${ToDec<Len<S>>}`>
-        : never;
+/** `s[i]`: the byte at offset I (an integer of kind KI), a uint8; or the index panic. */
+export type Index<S extends string, I0 extends string, KI extends I.W = "i64"> =
+  Pos<KI, I0> extends infer P extends string
+    ? IsNeg<P> extends true
+      ? Panic<`index out of range [${I.ToDec<KI, I0>}]`>
+      : S extends ""
+        ? Panic<`index out of range [${I.ToDec<KI, I0>}] with length 0`>
+        : Chars<S> extends infer C extends CharsT
+          ? At<C, P> extends infer c extends string
+            ? K.CODE[c]
+            : Panic<`index out of range [${I.ToDec<KI, I0>}] with length ${I.ToDec<"i64", Len<S>>}`>
+          : never
+    : never;
 
 /** `s + t`. */
 export type Concat<A extends string, B extends string> = `${A}${B}`;

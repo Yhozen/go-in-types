@@ -126,7 +126,10 @@ async function main() {
   const rows = await runAll(work, t0);
   if (argv.includes("--midrun")) {
     const mid: Work[] = [];
-    for (const r of rows.filter((r) => r.pass && r.set === "corpus" && (r.refOps ?? 0) > 10)) {
+    // every program the reference ran, also those that fail from the start
+    for (const r of rows.filter(
+      (r) => r.set === "corpus" && r.kind !== "skipped" && (r.refOps ?? 0) > 10,
+    )) {
       const prog = join(irDir, r.name.replace(/\.go$/, ".json"));
       const want = readFileSync(join(corpusDir, r.name.replace(/\.go$/, ".out")), "latin1");
       for (const q of [1, 2, 3]) {

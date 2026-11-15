@@ -629,19 +629,22 @@ function setResult(row: TypesResult, printed: any): void {
   if (typeof x === "number") row.exit = x;
 }
 
-export const rowText = (name: string, r: TypesResult): string =>
-  [
+export const rowText = (name: string, r: Partial<TypesResult> & { kind: string }): string => {
+  const n = (x: number | undefined, d = 1) => (x ?? 0).toFixed(d);
+  if (r.chunks === undefined) return `FAIL  ${name}  ${r.kind}: ${r.detail ?? ""}`;
+  return [
     r.pass ? "PASS" : "FAIL",
     name,
     r.endedAt !== undefined
       ? `ended at ${r.endedAt}/${r.chunks}`
       : `reached ${r.lastGood}/${r.chunks}`,
-    `${(r.instantiations / 1e6).toFixed(1)}M inst`,
-    `check ${r.checkSeconds.toFixed(1)} s (wall ${r.wallSeconds.toFixed(1)} s)`,
-    `peak ${(r.peakBytes / 2 ** 30).toFixed(2)} GB`,
+    `${n((r.instantiations ?? 0) / 1e6)}M inst`,
+    `check ${n(r.checkSeconds)} s (wall ${n(r.wallSeconds)} s)`,
+    `peak ${n((r.peakBytes ?? 0) / 2 ** 30, 2)} GB`,
     `ref ${r.refOps} ops${r.startOps ? ` (from ${r.startOps})` : ""}`,
     ...(r.pass ? [] : [`${r.kind}: ${r.detail ?? ""}`]),
   ].join("  ");
+};
 
 // ---------------------------------------------------------------- CLI
 

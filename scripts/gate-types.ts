@@ -168,9 +168,34 @@ async function runAll(work: Work[], t0: number): Promise<Row[]> {
     const rowPath = join(rowDir, "row.json");
     if (argv.includes("--resume") && existsSync(rowPath) && statSync(rowPath).mtimeMs > t0) {
       const row = JSON.parse(readFileSync(rowPath, "utf8")) as Row;
-      console.log(`[${++done}/${work.length}] (kept) ${rowText(w.name, row as TypesResult)}`);
+      console.log(`[${++done}/${work.length}] (kept) ${rowText(w.name, row)}`);
       return row;
     }
+    let row: Row;
+    try {
+      row = await runOne(w);
+    } catch (e: any) {
+      row = {
+        name: w.name,
+        set: w.set,
+        pass: false,
+        kind: "crash",
+        detail: String(e?.stack ?? e)
+          .split("\n")
+          .slice(0, 2)
+          .join(" | "),
+      };
+    }
+    mkdirSync(rowDir, { recursive: true });
+    writeFileSync(rowPath, JSON.stringify(row, null, 1) + "\n");
+    console.log(`[${++done}/${work.length}] ${rowText(w.name, row)}`);
+    return row;
+  });
+}
+
+async function runOne(w: Work): Promise<Row> {
+  const rowDir = join(gateDir, w.name.replaceAll("/", "__"));
+  {
     const p = await w.prep();
     let row: Row;
     if ("kind" in p) row = p;
@@ -200,11 +225,8 @@ async function runAll(work: Work[], t0: number): Promise<Row[]> {
         row = { ...r, name: w.name, set: w.set };
       }
     }
-    mkdirSync(rowDir, { recursive: true });
-    writeFileSync(rowPath, JSON.stringify(row, null, 1) + "\n");
-    console.log(`[${++done}/${work.length}] ${rowText(w.name, row as TypesResult)}`);
     return row;
-  });
+  }
 }
 
 function tally(rs: Row[]): string {

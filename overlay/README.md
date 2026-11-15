@@ -13,11 +13,21 @@ git-ignored) `overlay/tests.json` and `overlay/tsgo.json`.
 | `std/sync`         | all but `oncefunc.go`                                   | single-threaded; blocking = panic "deadlock"; `sync.Map` is a slice        |
 | `std/math`         | `*_asm.go`                                              | `haveArch* = false`: pure-Go floor/ceil/trunc/min/max/exp/exp2/hypot/log   |
 | `tsgo/`            | typescript-go files (paths relative to its module root) | tsgo config: harness main, no reflect/regexp/testing on the check path     |
+| `tsgo-std/`        | `syscall/rlimit.go`, `testing/iotest/logger.go`         | tsgo config only: no prlimit in `syscall.init`; no `log` (and `os`)        |
 | `xxh3/`            | `github.com/zeebo/xxh3`                                 | pure-Go, same API, no assembly/unsafe                                      |
+
+The engine's tsgo program has no `os` and no `reflect.TypeFor` in package
+initializers: the harness main is split by build tag (`main_os.go` native,
+`main_engine.go` with `gointypes`; the host calls `check`, an `-entry`),
+`internal/core` loses `ApplyDebugStackLimit` (moved to `main_os.go`),
+`internal/json` keeps the jsontext types but its `Marshal*`/`Unmarshal*`
+panic (dropping `encoding/json/v2`; `tsgo-parity.ts` proves no oracle check
+uses them), and `internal/tsoptions` computes `optionsType` on use and tests
+`*OrderedMap` with a type assertion.
 
 Files that must disappear map to the package's `empty.go` (go/packages'
 in-memory overlays cannot delete). Configs: `tests` = `std/`; `tsgo` =
-`std/` + `tsgo/` + `xxh3/`.
+`std/` + `tsgo/` + `tsgo-std/` + `xxh3/`.
 
 The module cache cannot be overlaid, so xxh3 is swapped by overlaying
 typescript-go's `go.mod` with an added `replace` (go/packages honours it).

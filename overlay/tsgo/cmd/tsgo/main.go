@@ -4,19 +4,18 @@
 // the check, into an in-memory FS rooted at /p; the check itself runs on
 // that FS with no OS access, output goes to a buffer printed at exit.
 // Does not import internal/execute (no build/watch/LSP/format/pprof).
+// main itself is per build: main_os.go (native: reads the files with os)
+// and main_engine.go (-tags gointypes: the engine calls check directly), so
+// the engine's program does not import os.
 package main
 
 import (
 	"bytes"
 	"gointypes/rt"
 	"io"
-	"os"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/microsoft/typescript-go/internal/compiler"
-	"github.com/microsoft/typescript-go/internal/core"
 	"github.com/microsoft/typescript-go/internal/execute/tsc"
 	"github.com/microsoft/typescript-go/internal/tsoptions"
 	"github.com/microsoft/typescript-go/internal/vfs"
@@ -43,22 +42,6 @@ func (s *memSys) Writer() io.Writer                    { return s.out }
 func (s *memSys) WriteOutputIsTTY() bool               { return false }
 func (s *memSys) GetWidthOfTerminal() int              { return 0 }
 func (s *memSys) GetEnvironmentVariable(string) string { return "" }
-
-func main() {
-	core.ApplyDebugStackLimit()
-	args := os.Args[1:]
-	files := map[string]string{}
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") && strings.HasSuffix(a, ".ts") {
-			b, err := os.ReadFile(a)
-			if err != nil {
-				rt.Exit(3)
-			}
-			files["/p/"+filepath.Base(a)] = string(b)
-		}
-	}
-	rt.Exit(check(files, args))
-}
 
 // beforeCheck is set only in native coverage builds (cover_hook.go).
 var beforeCheck func()

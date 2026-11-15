@@ -1,5 +1,6 @@
 // Generates the IR of the TypeScript 7 compiler harness and reports its
 // size: node scripts/tsgo-ir.ts [--config tsgo|census] [--tsgo-dir DIR] [-- frontend flags]
+// (default tags purego,gointypes unless the frontend flags give -tags)
 //
 //   tsgo    overlay/tsgo.json (the corpus overlays: harness main, std, tsgo, xxh3)
 //   census  overlay/tests.json (std overlays) + the stage 0 census harness
@@ -50,7 +51,19 @@ if (config === "census") {
 
 const out = join(outDir, "prog.json");
 const t0 = performance.now();
-const r = runFrontend(join(tsgoDir, "cmd/tsgo"), out, "none", ["-overlay", overlay, ...extra]);
+// gointypes: the bodyless gointypes/rt intrinsics and the harness's engine
+// main (overlay/tsgo/cmd/tsgo/main_engine.go), so the program has no os.
+// The host calls check (scripts/run.ts --check), so it is an entry point.
+const tags = extra.includes("-tags") ? [] : ["-tags", "purego,gointypes"];
+const entry =
+  config === "tsgo" ? ["-entry", "check=github.com/microsoft/typescript-go/cmd/tsgo.check"] : [];
+const r = runFrontend(join(tsgoDir, "cmd/tsgo"), out, "none", [
+  "-overlay",
+  overlay,
+  ...tags,
+  ...entry,
+  ...extra,
+]);
 const seconds = (performance.now() - t0) / 1000;
 process.stderr.write(r.log);
 if (r.errors.length) {

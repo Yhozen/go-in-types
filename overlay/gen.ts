@@ -48,6 +48,7 @@ const emptied: Record<string, string[]> = {
     "isprocessalive_windows.go",
     "enablevtprocessing_windows.go",
   ],
+  "testing/iotest": ["logger.go"],
 };
 
 /** Overlay a tree of real Go files (overlay/<src>/<pkg>/...) onto root. */
@@ -93,6 +94,7 @@ export function testsOverlay(): Record<string, string> {
 export function tsgoOverlay(dir: string): Record<string, string> {
   const replace = testsOverlay();
   tree(replace, "tsgo", dir);
+  tree(replace, "tsgo-std", join(goroot(), "src"));
   // Files under GOMODCACHE cannot be overlaid, so xxh3 is swapped by a
   // replace directive in an overlaid go.mod (generated: overlay/tsgo.go.mod).
   const gomod = readFileSync(join(dir, "go.mod"), "utf8");

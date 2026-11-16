@@ -123,7 +123,8 @@ Globals are heap objects 1..n in `Program.globals` order (heap.ts header);
 a global's address is `[id, "0"]`, a constant in the emitted code. The
 initial heap is `codec-heap.ts` `initialHeap`.
 
-Map keys are canonical strings (map.ts): ints and strings as themselves,
+Map keys are canonical strings (map.ts): ints and strings (a view's
+literal, `Sr.Lit`) as themselves,
 bools `t`/`f`, pointers `id.slot`, floats their bits with -0 as 0 and a
 NaN as `n<seq>` (unique per insert, never found by a lookup), interfaces
 `${T}|${form}` by the dynamic type's equality kind (or the "hash of
@@ -221,6 +222,12 @@ A chain of blocks comparing one int or string register with constants
 moves, `A` holding the live values); the default jumps on.
 
 ## Changes
+
+- String views (DESIGN.md "String views"): a string register may hold a
+  view `[Base, Off, Len]`. String `==`/`!=` emit `Sr.Eq`/`Sr.Ne`, `+` emits
+  `Sr.Concat` (`Sr.ConcatL`/`ConcatR` when one side is a constant), a string map key is `Sr.Lit<k>`, string slots compare with
+  equality kind `"s"`, and a `switch` with a case of 128+ bytes looks up
+  `Sr.Lit<x>`.
 
 - Fatal panics with a float value call `softfloat.PrintFloat64/32` through
   a `"q"` continuation, as `Error()`/`String()` (`Prog.mFlt`).

@@ -13,6 +13,19 @@
 // by the nibbles of the offset, built once per distinct string and memoized
 // by the checker's alias-instantiation cache, so a byte read costs a few
 // indexed accesses once it exists.
+//
+// Views. A string of at least VMIN (128) bytes may also be a view
+// `[Base, Off, Len]`: the bytes Base[Off : Off+Len] of a string literal Base,
+// with Off and Len ints and Len >= VMIN (so a view never equals a short
+// string). Slicing a string of VMIN bytes or more gives a view when the
+// result is that long (a view of a view is a view of the same base), so
+// `text[pos:]` of a long text costs a few int ops and every read goes
+// through the base's index, built once. Results shorter than VMIN are
+// literals. Every op here takes either form (`Str`); `Lit<S>` materialises
+// a view into its literal (memoized per view) where a literal is needed:
+// concatenation, map keys, comparison of long strings with different
+// views, conversions to bytes or runes, the bytealg searches and printing.
+// Literal-only helpers end in L (`LenL`, `CodesL`).
 import type * as HS from "./heap.ts";
 import type * as HN from "./nat.ts";
 import type * as I from "./int.ts";
@@ -20,6 +33,11 @@ import type * as K from "./str-tables.gen.ts";
 
 /** A runtime panic: int.ts's `["panic", msg]`. */
 export type Panic<M extends string> = I.Panic<M>;
+
+/** A view: the bytes Base[Off : Off+Len] of the literal Base (Len >= VMIN = 128). */
+export type View = [string, string, string];
+/** A Go string: a literal or a view. */
+export type Str = string | View;
 
 type NegNib = "8" | "9" | "a" | "b" | "c" | "d" | "e" | "f";
 
@@ -162,7 +180,9 @@ type UInc<U extends string, O extends string = ""> = U extends `${infer x}${infe
   : `${O}1`;
 
 /** `len(s)`: the number of bytes (memoized per string). */
-export type Len<S extends string> = Len8<S, "0", S>;
+export type Len<S> = S extends string ? Len8<S, "0", S> : F2<S>;
+/** `len(s)` of a literal. */
+export type LenL<S extends string> = Len8<S, "0", S>;
 /** 8 chars per step for strings under 128 bytes (M: the count of 8s so far), then the general count. */
 type Len8<S extends string, M extends string, S0 extends string> = M extends "g"
   ? Cnt16<S0, "0", "">
@@ -501,7 +521,7 @@ type SuffixFrom<C extends CharsT, P extends string> =
  * panic Go raises (checked in Go's order: h, then l).
  */
 export type Slice<
-  S extends string,
+  S,
   L extends string | null,
   H extends string | null,
   KL extends I.W = "i64",
@@ -513,7 +533,7 @@ export type Slice<
       : SliceH<S, N, L extends string ? L : "0", N, KL, "i64", L extends string ? L : "0", N>
     : never;
 type SliceH<
-  S extends string,
+  S,
   N extends string,
   L extends string,
   H extends string,
@@ -537,45 +557,120 @@ type SliceH<
 type Pos<K extends I.W, A extends string> = K extends "i64" | "i32" | "i16" | "i8"
   ? A
   : I.ZExt<K, A>;
-type SliceOk<S extends string, N extends string, L extends string, H extends string> = L extends H
+type SliceOk<S, N extends string, L extends string, H extends string> = L extends H
   ? ""
-  : H extends N
-    ? L extends "0"
+  : L extends "0"
+    ? H extends N
       ? S
-      : Chars<S> extends infer C extends CharsT
-        ? SuffixFrom<C, L>
-        : never
-    : Chars<S> extends infer C extends CharsT
-      ? SubAE<C, L, NDec<H>>
-      : never;
+      : SliceOk2<S, N, L, H>
+    : SliceOk2<S, N, L, H>;
+type SliceOk2<S, N extends string, L extends string, H extends string> = S extends string
+  ? IsLong<N> extends true
+    ? SliceAt<S, L, H, HN.Sub<H, L>>
+    : SubLit<S, L, H, N>
+  : SliceAt<F0<S> & string, HN.Add<F1<S> & string, L>, HN.Add<F1<S> & string, H>, HN.Sub<H, L>>;
+/** Base[A:E] (M = E - A > 0 bytes): a view when M >= VMIN, else the literal. */
+type SliceAt<B extends string, A extends string, E extends string, M extends string> =
+  IsLong<M> extends true ? VMk<B, A, M> : SubLit<B, A, E, LenL<B>>;
+/** The literal S[A:E] (0 <= A < E <= N = len(S)). */
+type SubLit<S extends string, A extends string, E extends string, N extends string> =
+  Chars<S> extends infer C extends CharsT
+    ? E extends N
+      ? A extends "0"
+        ? S
+        : SuffixFrom<C, A>
+      : SubAE<C, A, NDec<E>>
+    : never;
+
+// ---------------------------------------------------------------- views
+
+/** Is a canonical n >= 0 at least VMIN (128 = "080")? Below it n has one nibble or two (the second 0..7). */
+type IsLong<N extends string> = N extends ShortN ? false : true;
+type Nib =
+  | "0"
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9"
+  | "a"
+  | "b"
+  | "c"
+  | "d"
+  | "e"
+  | "f";
+type ShortN = Nib | `${Nib}${"0" | "1" | "2" | "3" | "4" | "5" | "6" | "7"}`;
+/** The view Base[A : A+M]. */
+type VMk<B extends string, A extends string, M extends string> = B extends string
+  ? [B, A, M]
+  : never;
+
+/** S as a literal: a view's bytes (memoized per view), a literal itself. */
+export type Lit<S> = S extends string ? S : Mat<F0<S> & string, F1<S> & string, F2<S> & string>;
+type Mat<B extends string, O extends string, N extends string> = SubLit<
+  B,
+  O,
+  HN.Add<O, N>,
+  LenL<B>
+>;
+/** Whether S is a view. */
+export type IsView<S> = S extends string ? false : true;
 
 // ---------------------------------------------------------------- bytes
 
 /** `s[i]`: the byte at offset I (an integer of kind KI), a uint8; or the index panic. */
-export type Index<S extends string, I0 extends string, KI extends I.W = "i64"> =
+export type Index<S, I0 extends string, KI extends I.W = "i64"> =
   Pos<KI, I0> extends infer P extends string
     ? IsNeg<P> extends true
       ? Panic<`index out of range [${I.ToDec<KI, I0>}]`>
-      : S extends ""
-        ? Panic<`index out of range [${I.ToDec<KI, I0>}] with length 0`>
-        : Chars<S> extends infer C extends CharsT
-          ? At<C, P> extends infer c extends string
-            ? K.CODE[c]
-            : Panic<`index out of range [${I.ToDec<KI, I0>}] with length ${I.ToDec<"i64", Len<S>>}`>
-          : never
+      : S extends string
+        ? S extends ""
+          ? Panic<`index out of range [${I.ToDec<KI, I0>}] with length 0`>
+          : Chars<S> extends infer C extends CharsT
+            ? At<C, P> extends infer c extends string
+              ? K.CODE[c]
+              : Panic<`index out of range [${I.ToDec<KI, I0>}] with length ${I.ToDec<"i64", LenL<S>>}`>
+            : never
+        : IndexV<F0<S> & string, F1<S> & string, F2<S> & string, P, I0, KI>
     : never;
+type IndexV<
+  B extends string,
+  O extends string,
+  N extends string,
+  P extends string,
+  I0 extends string,
+  KI extends I.W,
+> =
+  NLt<P, N> extends true
+    ? Chars<B> extends infer C extends CharsT
+      ? K.CODE[At<C, HN.Add<O, P>> & string]
+      : never
+    : Panic<`index out of range [${I.ToDec<KI, I0>}] with length ${I.ToDec<"i64", N>}`>;
 
+/** `s + c` for a string literal C (a constant). */
+export type ConcatL<A, C extends string> = A extends string ? `${A}${C}` : `${Lit<A> & string}${C}`;
+/** `c + s` for a string literal C (a constant). */
+export type ConcatR<C extends string, B> = B extends string ? `${C}${B}` : `${C}${Lit<B> & string}`;
 /** `s + t`. */
-export type Concat<A extends string, B extends string> = `${A}${B}`;
+export type Concat<A, B> = A extends string
+  ? B extends string
+    ? `${A}${B}`
+    : `${A}${Lit<B> & string}`
+  : `${Lit<A> & string}${Lit<B> & string}`;
 
 /** The bytes of S as a tuple of uint8s (`[]byte(s)` contents; S up to a few thousand bytes). */
-export type Codes<
+export type Codes<S> = CodesL<Lit<S> & string>;
+type CodesL<
   S extends string,
   O extends string[] = [],
 > = S extends `${infer a}${infer b}${infer c}${infer d}${infer R}`
-  ? Codes<R, [...O, K.CODE[a], K.CODE[b], K.CODE[c], K.CODE[d]]>
+  ? CodesL<R, [...O, K.CODE[a], K.CODE[b], K.CODE[c], K.CODE[d]]>
   : S extends `${infer a}${infer R}`
-    ? Codes<R, [...O, K.CODE[a]]>
+    ? CodesL<R, [...O, K.CODE[a]]>
     : O;
 
 /** A string from uint8s (`string(b)` contents). */
@@ -594,7 +689,13 @@ export type FromCodes<Cs extends string[], O extends string = ""> = Cs extends [
 // ---------------------------------------------------------------- comparison
 
 /** Compare byte strings: "f" (-1), "0" or "1" (runtime.cmpstring). */
-export type Compare<A extends string, B extends string> = A extends B ? "0" : Cmp4<A, B>;
+export type Compare<A, B> = A extends B
+  ? "0"
+  : A extends string
+    ? B extends string
+      ? Cmp4<A, B>
+      : Cmp4<A, Lit<B> & string>
+    : Cmp4<Lit<A> & string, Lit<B> & string>;
 type Cmp4<
   A extends string,
   B extends string,
@@ -621,33 +722,46 @@ type CmpC<X extends string, Y extends string> = X extends `${infer xh}${infer xl
   : never;
 
 /** `a == b`. */
-export type Eq<A extends string, B extends string> = [A] extends [B] ? true : false;
+export type Eq<A, B> = [A] extends [B]
+  ? true
+  : A extends string
+    ? B extends string
+      ? false
+      : EqV<A, B>
+    : EqV<A, B>;
+/** `a != b`. */
+export type Ne<A, B> = Eq<A, B> extends true ? false : true;
+/** Equality when a side is a view: equal lengths, then the bytes. */
+type EqV<A, B> = Len<A> extends Len<B> ? ([Lit<A>] extends [Lit<B>] ? true : false) : false;
 /** `a < b`. */
-export type Lt<A extends string, B extends string> = Compare<A, B> extends "f" ? true : false;
+export type Lt<A, B> = Compare<A, B> extends "f" ? true : false;
 /** `a <= b`. */
-export type Le<A extends string, B extends string> = Compare<A, B> extends "1" ? false : true;
+export type Le<A, B> = Compare<A, B> extends "1" ? false : true;
 /** `a > b`. */
-export type Gt<A extends string, B extends string> = Compare<A, B> extends "1" ? true : false;
+export type Gt<A, B> = Compare<A, B> extends "1" ? true : false;
 /** `a >= b`. */
-export type Ge<A extends string, B extends string> = Compare<A, B> extends "f" ? false : true;
+export type Ge<A, B> = Compare<A, B> extends "f" ? false : true;
 
 // ---------------------------------------------------------------- searching (internal/bytealg)
 
 /** `bytealg.IndexByteString(s, c)`: the first offset of byte C, or -1. */
-export type IndexByte<
-  S extends string,
-  C extends string,
-> = S extends `${infer P}${K.CHR[C]}${string}` ? Len<P> : "f";
+export type IndexByte<S, C extends string> = S extends string
+  ? IndexByteL<S, C>
+  : IndexByteL<Lit<S> & string, C>;
+type IndexByteL<S extends string, C extends string> = S extends `${infer P}${K.CHR[C]}${string}`
+  ? LenL<P>
+  : "f";
 
 /** `bytealg.IndexString(s, sub)`: the first offset of Sub, or -1. */
-export type IndexStr<S extends string, Sub extends string> = Sub extends ""
+export type IndexStr<S, Sub> = IndexStrL<Lit<S> & string, Lit<Sub> & string>;
+type IndexStrL<S extends string, Sub extends string> = Sub extends ""
   ? "0"
   : S extends `${infer P}${Sub}${string}`
-    ? Len<P>
+    ? LenL<P>
     : "f";
 
 /** `bytealg.CountString(s, c)`: the number of bytes equal to C. */
-export type CountByte<S extends string, C extends string> = CountD<S, K.CHR[C], "0">;
+export type CountByte<S, C extends string> = CountD<Lit<S> & string, K.CHR[C], "0">;
 type CountL<S extends string, Ch extends string, N extends string, F extends string> = F extends "0"
   ? [1, S, N]
   : S extends `${string}${Ch}${infer R}`
@@ -731,7 +845,10 @@ type Rest<D, R1, R2, R3, R4> = D extends [infer r, infer w]
  * `[false, "0", "0", P]` at the end. The emitter keeps the next offset as the
  * iterator's state.
  */
-export type Next<S extends string, P extends string> = S extends ""
+export type Next<S, P extends string> = S extends string
+  ? NextL<S, P>
+  : NextV<F0<S> & string, F1<S> & string, F2<S> & string, P>;
+type NextL<S extends string, P extends string> = S extends ""
   ? [false, "0", "0", P]
   : Chars<S> extends infer C extends CharsT
     ? At<C, P> extends infer c0 extends string
@@ -753,11 +870,52 @@ type NextM<C extends CharsT, P extends string, c0 extends string, P1 extends str
 /** A char read by At, or "" past the end. */
 type Ch<X> = X extends string ? X : "";
 
+/** Next on the view B[O : O+N] at view offset P (Q = O + P in the base). */
+type NextV<B extends string, O extends string, N extends string, P extends string> =
+  NLt<P, N> extends true
+    ? Chars<B> extends infer C extends CharsT
+      ? HN.Add<O, P> extends infer Q extends string
+        ? At<C, Q> extends infer c0 extends string
+          ? K.CLS[c0] extends "1"
+            ? [true, P, K.CODE[c0], NInc<P>]
+            : NextVM<C, N, P, Q, c0>
+          : never
+        : never
+      : never
+    : [false, "0", "0", P];
+type NextVM<
+  C extends CharsT,
+  N extends string,
+  P extends string,
+  Q extends string,
+  c0 extends string,
+> =
+  NInc<P> extends infer P1 extends string
+    ? NInc<P1> extends infer P2 extends string
+      ? NInc<Q> extends infer Q1 extends string
+        ? NInc<Q1> extends infer Q2 extends string
+          ? Decode<
+              c0,
+              ChV<C, N, P1, Q1>,
+              ChV<C, N, P2, Q2>,
+              ChV<C, N, NInc<P2>, NInc<Q2>>
+            > extends [infer r, infer w extends string]
+            ? [true, P, r, NAddW<P, w>]
+            : never
+          : never
+        : never
+      : never
+    : never;
+/** The char at base offset Qk when view offset Pk is inside the view (N bytes), else "". */
+type ChV<C extends CharsT, N extends string, Pk extends string, Qk extends string> =
+  NLt<Pk, N> extends true ? Ch<At<C, Qk>> : "";
+
 /** `[]rune(s)` contents: the runes of S as a tuple (S up to ~2,000 runes). */
-export type Runes<S extends string, O extends string[] = []> = S extends ""
+export type Runes<S> = RunesL<Lit<S> & string>;
+type RunesL<S extends string, O extends string[] = []> = S extends ""
   ? O
   : DecodeHead<S> extends [infer r extends string, string, infer R extends string]
-    ? Runes<R, [...O, r]>
+    ? RunesL<R, [...O, r]>
     : never;
 
 /** `string(runes)` contents: each rune's encoding (U+FFFD for invalid ones). */
@@ -786,11 +944,12 @@ type Slot<O, S extends string> =
 /** cap of `[]byte(s)`: roundupsize(len, noscan). */
 type BytesCap<N extends string> = HN.RoundUpSize<N, true>;
 /** The heap after `[]byte(s)` (an empty s allocates nothing). */
-export type StrToBytes<H, S extends string> = S extends ""
+export type StrToBytes<H, S> = StrToBytesL<H, Lit<S> & string>;
+type StrToBytesL<H, S extends string> = S extends ""
   ? H
-  : StrFill<HS.MakeSlice<H, BytesCap<Len<S>>, "1", ["0"]>, HS.NextId<H>, S, "0">;
+  : StrFill<HS.MakeSlice<H, BytesCap<LenL<S>>, "1", ["0"]>, HS.NextId<H>, S, "0">;
 /** The slice `[]byte(s)` gives, read from the heap before StrToBytes. */
-export type StrToBytesV<H, S extends string> = S extends ""
+export type StrToBytesV<H, S> = S extends ""
   ? SliceOf<"00000", "0", "0", "0">
   : Len<S> extends infer N extends string
     ? SliceOf<HS.NextId<H>, "0", N, BytesCap<N>>
@@ -799,14 +958,14 @@ export type StrToBytesV<H, S extends string> = S extends ""
 type StrFill<H, Id, S extends string, Off extends string> =
   K.Blk256<S> extends [infer B extends { t: string }, infer R extends string, unknown]
     ? StrFill<
-        HS.CopyVals_<H, SliceOf<Id, Off, "0", "0">, Codes<B["t"]>, ["0"]>,
+        HS.CopyVals_<H, SliceOf<Id, Off, "0", "0">, CodesL<B["t"]>, ["0"]>,
         Id,
         R,
         HN.Add<Off, "001">
       >
     : S extends ""
       ? H
-      : HS.CopyVals_<H, SliceOf<Id, Off, "0", "0">, Codes<S>, ["0"]>;
+      : HS.CopyVals_<H, SliceOf<Id, Off, "0", "0">, CodesL<S>, ["0"]>;
 
 /** `string(b)` for a byte slice (also strings.Builder.String's buffer). */
 export type BytesToStr<H, Sl> = Sl extends null
@@ -842,13 +1001,14 @@ type ReadL<
       >;
 
 /** The heap after `[]rune(s)`. */
-export type StrToRunes<H, S extends string> = S extends ""
+export type StrToRunes<H, S> = StrToRunesL<H, Lit<S> & string>;
+type StrToRunesL<H, S extends string> = S extends ""
   ? H
   : RunesCnt<S> extends infer N extends string
     ? RuneFill<HS.MakeSlice<H, RunesCap<N>, "1", ["0"]>, HS.NextId<H>, S, "0">
     : never;
 /** The slice `[]rune(s)` gives, read from the heap before StrToRunes. */
-export type StrToRunesV<H, S extends string> = S extends ""
+export type StrToRunesV<H, S> = S extends ""
   ? SliceOf<"00000", "0", "0", "0">
   : RunesCnt<S> extends infer N extends string
     ? SliceOf<HS.NextId<H>, "0", N, RunesCap<N>>
@@ -856,7 +1016,7 @@ export type StrToRunesV<H, S extends string> = S extends ""
 /** cap of `[]rune(s)`: roundupsize(4 n) / 4. */
 type RunesCap<N extends string> = HN.Div<HN.RoundUpSize<HN.Mul<N, "4">, true>, "4">;
 /** The number of runes in S (utf8.RuneCountInString). */
-export type RunesCnt<S extends string> = RCntD<S, "0">;
+export type RunesCnt<S> = RCntD<Lit<S> & string, "0">;
 type RCntD<S extends string, N extends string> =
   RCntL<S, N, "300"> extends infer R
     ? F0<R> extends 1

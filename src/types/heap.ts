@@ -103,6 +103,7 @@ import type {
   TPut,
 } from "./heap.gen.ts";
 import type { Add, Dec, Digits16, GrowCap, Inc, IsNeg, Le, Lt, Min, Mul, Sub } from "./nat.ts";
+import type { Eq as StrEq } from "./str.ts";
 
 export type { IdWidth } from "./heap.gen.ts";
 
@@ -965,7 +966,8 @@ type Missing<P, T, I> = Look<Tab<P, "missing">, `${T & string}:${I & string}`> &
 
 /**
  * a == b. K is the equality kind of the static type: "=" (identity: bool,
- * ints, strings, pointers, chans, nil checks), "f32" / "f64" (float rules
+ * ints, pointers, chans, nil checks), "s" (strings: a literal or a view,
+ * str.ts), "f32" / "f64" (float rules
  * of DESIGN.md), "i" (interface: dynamic types, then the dynamic type's
  * kind from P["eqk"]), or a tuple of kinds, one per slot (structs and
  * arrays; compared in order, stopping at the first difference as Go does).
@@ -973,13 +975,15 @@ type Missing<P, T, I> = Look<Tab<P, "missing">, `${T & string}:${I & string}`> &
  */
 export type Eq<A, B, K, P> = K extends "="
   ? Same<A, B>
-  : K extends "f64"
-    ? F64Eq<A & string, B & string>
-    : K extends "f32"
-      ? F32Eq<A & string, B & string>
-      : K extends "i"
-        ? IfaceEq<A, B, P>
-        : EqAgg<A, B, K, P>;
+  : K extends "s"
+    ? StrEq<A, B>
+    : K extends "f64"
+      ? F64Eq<A & string, B & string>
+      : K extends "f32"
+        ? F32Eq<A & string, B & string>
+        : K extends "i"
+          ? IfaceEq<A, B, P>
+          : EqAgg<A, B, K, P>;
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type EqAgg<A, B, K, P> = K extends [infer k, ...infer KR]
   ? A extends [infer a, ...infer AR]

@@ -46,7 +46,7 @@ import type * as K from "./str-tables.gen.ts";
 import type * as T from "./map-tables.gen.ts";
 import type { AllocObj, GetObj, NextId, PutObj } from "./heap.ts";
 import type { Panic } from "./int.ts";
-import type { Len, NDec, NInc, NLt, NTrim } from "./str.ts";
+import type { LenL as Len, Lit, NDec, NInc, NLt, NTrim } from "./str.ts";
 
 // ---------------------------------------------------------------- constructors
 
@@ -129,7 +129,7 @@ export type KeyPath<Mode, C extends string> = Mode extends "i"
 // ---------------------------------------------------------------- canonical keys
 
 /** A string key inside a struct or array key: length-prefixed. */
-export type KeyStr<S extends string> = `${Len<S>}:${S}`;
+export type KeyStr<S> = S extends string ? `${Len<S>}:${S}` : KeyStr<Lit<S>>;
 /** A bool key. */
 export type KeyBool<B> = B extends true ? "t" : "f";
 /** A pointer key ([Id, Slot] or null). */

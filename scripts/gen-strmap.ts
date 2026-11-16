@@ -240,6 +240,8 @@ function strTests(): string {
     check(`S.Ge<${lit(a)}, ${lit(b)}>`, String(a >= b));
     check(`S.Eq<${lit(a)}, ${lit(b)}>`, String(a === b));
     check(`S.Concat<${lit(a)}, ${lit(b)}>`, lit(a + b));
+    check(`S.ConcatL<${lit(a)}, ${lit(b)}>`, lit(a + b));
+    check(`S.ConcatR<${lit(a)}, ${lit(b)}>`, lit(a + b));
   }
 
   // ---- bytes
@@ -590,6 +592,8 @@ function viewTests(out: string[], check: (actual: string, expected: string) => v
     check(`S.Eq<${v}, ${v}>`, "true");
     check(`S.Concat<${v}, "!">`, lit(s + "!"));
     check(`S.Concat<"!", ${v}>`, lit("!" + s));
+    check(`S.ConcatL<${v}, "!">`, lit(s + "!"));
+    check(`S.ConcatR<"!", ${v}>`, lit("!" + s));
     check(`S.Concat<${v}, ${v}>`, lit(s + s));
     check(`M.KeyStr<${v}>`, lit(`${encInt(n)}:${s}`));
     const c = s.charCodeAt(vi(n));

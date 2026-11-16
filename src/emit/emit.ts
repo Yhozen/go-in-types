@@ -1615,6 +1615,12 @@ class SegB {
     if (ti!.k === "string") {
       const x = this.val(ins.x).t;
       const y = this.val(ins.y).t;
+      // a constant is a literal: only the other side may be a view
+      const cx = "c" in ins.x;
+      const cy = "c" in ins.y;
+      if (cx && cy) return this.setReg(ins.dst, `\`\${${x} & string}\${${y} & string}\``);
+      if (cy) return this.setReg(ins.dst, `Sr.ConcatL<${x}, ${y}>`);
+      if (cx) return this.setReg(ins.dst, `Sr.ConcatR<${x}, ${y}>`);
       return this.setReg(ins.dst, `Sr.Concat<${x}, ${y}>`);
     }
     const w = e.kindW(ins.t);

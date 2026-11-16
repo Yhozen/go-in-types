@@ -225,7 +225,7 @@ moves, `A` holding the live values); the default jumps on.
 
 - String views (DESIGN.md "String views"): a string register may hold a
   view `[Base, Off, Len]`. String `==`/`!=` emit `Sr.Eq`/`Sr.Ne`, `+` emits
-  `Sr.Concat`, a string map key is `Sr.Lit<k>`, string slots compare with
+  `Sr.Concat` (`Sr.ConcatL`/`ConcatR` when one side is a constant), a string map key is `Sr.Lit<k>`, string slots compare with
   equality kind `"s"`, and a `switch` with a case of 128+ bytes looks up
   `Sr.Lit<x>`.
 

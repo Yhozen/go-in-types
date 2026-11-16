@@ -567,15 +567,15 @@ type SliceOk<S, N extends string, L extends string, H extends string> = L extend
 type SliceOk2<S, N extends string, L extends string, H extends string> = S extends string
   ? IsLong<N> extends true
     ? SliceAt<S, L, H, HN.Sub<H, L>>
-    : SubLit<S, L, H>
+    : SubLit<S, L, H, N>
   : SliceAt<F0<S> & string, HN.Add<F1<S> & string, L>, HN.Add<F1<S> & string, H>, HN.Sub<H, L>>;
 /** Base[A:E] (M = E - A > 0 bytes): a view when M >= VMIN, else the literal. */
 type SliceAt<B extends string, A extends string, E extends string, M extends string> =
-  IsLong<M> extends true ? VMk<B, A, M> : SubLit<B, A, E>;
-/** The literal S[A:E] (0 <= A < E <= len). */
-type SubLit<S extends string, A extends string, E extends string> =
+  IsLong<M> extends true ? VMk<B, A, M> : SubLit<B, A, E, LenL<B>>;
+/** The literal S[A:E] (0 <= A < E <= N = len(S)). */
+type SubLit<S extends string, A extends string, E extends string, N extends string> =
   Chars<S> extends infer C extends CharsT
-    ? E extends LenL<S>
+    ? E extends N
       ? A extends "0"
         ? S
         : SuffixFrom<C, A>
@@ -584,10 +584,26 @@ type SubLit<S extends string, A extends string, E extends string> =
 
 // ---------------------------------------------------------------- views
 
-/** Is a canonical n >= 0 at least VMIN (128 = "080": three nibbles or more)? */
-type IsLong<N extends string> = N extends `${infer _0}${infer _1}${infer _2}${string}`
-  ? true
-  : false;
+/** Is a canonical n >= 0 at least VMIN (128 = "080")? Below it n has one nibble or two (the second 0..7). */
+type IsLong<N extends string> = N extends ShortN ? false : true;
+type Nib =
+  | "0"
+  | "1"
+  | "2"
+  | "3"
+  | "4"
+  | "5"
+  | "6"
+  | "7"
+  | "8"
+  | "9"
+  | "a"
+  | "b"
+  | "c"
+  | "d"
+  | "e"
+  | "f";
+type ShortN = Nib | `${Nib}${"0" | "1" | "2" | "3" | "4" | "5" | "6" | "7"}`;
 /** The view Base[A : A+M]. */
 type VMk<B extends string, A extends string, M extends string> = B extends string
   ? [B, A, M]
@@ -595,7 +611,12 @@ type VMk<B extends string, A extends string, M extends string> = B extends strin
 
 /** S as a literal: a view's bytes (memoized per view), a literal itself. */
 export type Lit<S> = S extends string ? S : Mat<F0<S> & string, F1<S> & string, F2<S> & string>;
-type Mat<B extends string, O extends string, N extends string> = SubLit<B, O, HN.Add<O, N>>;
+type Mat<B extends string, O extends string, N extends string> = SubLit<
+  B,
+  O,
+  HN.Add<O, N>,
+  LenL<B>
+>;
 /** Whether S is a view. */
 export type IsView<S> = S extends string ? false : true;
 
@@ -630,6 +651,10 @@ type IndexV<
       : never
     : Panic<`index out of range [${I.ToDec<KI, I0>}] with length ${I.ToDec<"i64", N>}`>;
 
+/** `s + c` for a string literal C (a constant). */
+export type ConcatL<A, C extends string> = A extends string ? `${A}${C}` : `${Lit<A> & string}${C}`;
+/** `c + s` for a string literal C (a constant). */
+export type ConcatR<C extends string, B> = B extends string ? `${C}${B}` : `${C}${Lit<B> & string}`;
 /** `s + t`. */
 export type Concat<A, B> = A extends string
   ? B extends string

@@ -414,8 +414,10 @@ class Emitter {
     const ti = this.info(t);
     switch (ti.k) {
       case "int":
-      case "string":
         return v;
+      case "string":
+        // a view's key is its literal
+        return `Sr.Lit<${v}>`;
       case "float":
         return `R.KeyFloat<${v}, "${ti.fbits}", ${nan}>`;
       case "interface":
@@ -592,11 +594,14 @@ class FuncEmitter {
     }
     const cases: { key: string; blk: number }[] = [];
     const seen = new Set<string>();
+    let long = false;
     let b = bi;
     let cur: { x: number; key: Operand } | null = h;
     const sb0 = { constText: (c: any, t: number) => constTextOf(this.e, c, t) };
     while (cur && cur.x === h.x) {
-      const key = sb0.constText((cur.key as any).c, (cur.key as any).t);
+      const kc = (cur.key as any).c;
+      if (typeof kc === "string" && kc.length >= 128) long = true;
+      const key = sb0.constText(kc, (cur.key as any).t);
       if (!seen.has(key)) cases.push({ key, blk: b });
       seen.add(key);
       const nx = f.blocks[b]!.succs[1]!;
@@ -607,7 +612,7 @@ class FuncEmitter {
       cur = t2;
     }
     if (cases.length < SWITCH_MIN) return null;
-    return { x: h.x, cases, last: b };
+    return { x: h.x, cases, last: b, long };
   }
 
   /** Ordered parameters (registers) of a set: D, recover registers, then the rest ascending. */
@@ -888,7 +893,8 @@ class SegB {
    */
   switchOp(sw: SwitchChain): void {
     const fe = this.fe;
-    const x = this.atom({ r: sw.x });
+    // a view (>= 128 bytes) matches no shorter case: only long cases need its literal
+    const x = sw.long ? this.atomV(`Sr.Lit<${this.atom({ r: sw.x })}>`) : this.atom({ r: sw.x });
     // every value a target may need, as A
     const live = this.liveBefore[this.idx] ?? new Set<number>();
     const regs = [...this.env.keys()].filter((r) => r === D_REG || live.has(r));
@@ -1582,7 +1588,9 @@ class SegB {
           } else {
             const x = this.val(ins.x).t;
             const y = this.val(ins.y).t;
-            return this.setReg(ins.dst, neg ? `R.Ne<${x}, ${y}>` : `R.Eq<${x}, ${y}>`);
+            // strings: a literal or a view (str.ts), not identity
+            const m = kind === "string" ? "Sr" : "R";
+            return this.setReg(ins.dst, neg ? `${m}.Ne<${x}, ${y}>` : `${m}.Eq<${x}, ${y}>`);
           }
         } else {
           const x = this.atom(ins.x);
@@ -1607,7 +1615,7 @@ class SegB {
     if (ti!.k === "string") {
       const x = this.val(ins.x).t;
       const y = this.val(ins.y).t;
-      return this.setReg(ins.dst, `\`\${${x} & string}\${${y} & string}\``);
+      return this.setReg(ins.dst, `Sr.Concat<${x}, ${y}>`);
     }
     const w = e.kindW(ins.t);
     switch (k) {
@@ -1641,6 +1649,7 @@ class SegB {
       const k = T.info[s]!;
       if (k.k === "float") return `"f${k.fbits}"`;
       if (k.k === "interface") return `"i"`;
+      if (k.k === "string") return `"s"`;
       return `"="`;
     };
     if (T.info[t]!.agg) return `[${T.slotTypes(t).map(one).join(", ")}]`;
@@ -2261,6 +2270,8 @@ interface SwitchChain {
   cases: { key: string; blk: number }[];
   /** the last block of the chain (its "else" edge is the default) */
   last: number;
+  /** a string case is VMIN (128) bytes or longer: a view value must be materialised to match */
+  long: boolean;
 }
 /** Address expressions that are never nil (a fresh object, or derived from a checked pointer). */
 const NONNIL = /^Hp\.(PtrMk<Hp\.NextId<|FieldAddr<|ArrayIndexAddr<|SliceIndexAddr<)/;

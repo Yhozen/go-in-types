@@ -212,23 +212,25 @@ export type IKey<P, V, Nan> = V extends null
           : f
         : never
     : never;
-type KeyK<P, V, K, Nan> = K extends "="
-  ? V extends string
-    ? `${Len<V>}:${V}`
-    : V extends boolean
-      ? V extends true
-        ? "t"
-        : "f"
-      : V extends null
-        ? "nil"
-        : `${I0<V> & string}.${I1<V> & string}`
-  : K extends "f64"
-    ? KeyFloat<V, "64", Nan>
-    : K extends "f32"
-      ? KeyFloat<V, "32", Nan>
-      : K extends "i"
-        ? IKey<P, V, Nan>
-        : KeyAgg<P, V, K, Nan, "">;
+type KeyK<P, V, K, Nan> = K extends "s"
+  ? KeyK<P, Sr.Lit<V>, "=", Nan>
+  : K extends "="
+    ? V extends string
+      ? `${Len<V>}:${V}`
+      : V extends boolean
+        ? V extends true
+          ? "t"
+          : "f"
+        : V extends null
+          ? "nil"
+          : `${I0<V> & string}.${I1<V> & string}`
+    : K extends "f64"
+      ? KeyFloat<V, "64", Nan>
+      : K extends "f32"
+        ? KeyFloat<V, "32", Nan>
+        : K extends "i"
+          ? IKey<P, V, Nan>
+          : KeyAgg<P, V, K, Nan, "">;
 type KeyAgg<P, V, K, Nan, Acc extends string> = K extends [infer k, ...infer KR]
   ? V extends [infer v, ...infer VR]
     ? KeyK<P, v, k, Nan> extends infer f
@@ -456,10 +458,10 @@ type PStr<P extends ProgB, V, S> =
   I0<V> extends keyof P["mFlt"]
     ? I0<V> extends keyof P["pk"]
       ? I1<P["pk"][I0<V>]> extends true
-        ? `${I2<P["pk"][I0<V>]> & string}(${S & string})`
-        : S
-      : S
-    : Indent<S>;
+        ? `${I2<P["pk"][I0<V>]> & string}(${Sr.Lit<S> & string})`
+        : Sr.Lit<S>
+      : Sr.Lit<S>
+    : Indent<Sr.Lit<S>>;
 type Str<X> = X extends string ? X : "";
 type Indent<S> = S extends `${infer A}\n${infer B}` ? `${A}\n\t${Indent<B>}` : S;
 type PanicVal<P extends ProgB, V> = V extends null
@@ -470,8 +472,8 @@ type PanicVal<P extends ProgB, V> = V extends null
 type PVal<Pk, V> =
   I0<Pk> extends "s"
     ? I1<Pk> extends true
-      ? `${I2<Pk> & string}("${Str<Indent<V>>}")`
-      : Indent<V>
+      ? `${I2<Pk> & string}("${Str<Indent<Sr.Lit<V>>>}")`
+      : Indent<Sr.Lit<V>>
     : I0<Pk> extends "o"
       ? `(${I2<Pk> & string}) 0xc000010000`
       : PrintV<V, I0<Pk>> extends infer v extends string
@@ -488,7 +490,7 @@ export type PrintV<V, Kd> = Kd extends "b"
     ? "true"
     : "false"
   : Kd extends "s"
-    ? V
+    ? Sr.Lit<V>
     : Kd extends I.W
       ? I.ToDec<Kd, V & string>
       : Kd extends "sl"
@@ -543,7 +545,7 @@ export type CopyAgg<H, D, S, Nn extends string, Z> = Hp.Copy<
   Z
 >;
 /** The first N bytes of S. */
-export type StrTake<S, N> = Sr.Slice<S & string, null, N & string>;
+export type StrTake<S, N> = Sr.Slice<S, null, N & string>;
 /** wrapnilchk */
 export type WrapNilCk<Pt> = Pt extends null ? false : true;
 export type WrapNilMsg<Typ, Meth> =

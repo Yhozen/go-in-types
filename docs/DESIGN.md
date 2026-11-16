@@ -141,6 +141,9 @@ Rules:
 
 ## Contract changes
 
+- strview: strings of 128+ bytes may be views `[Base, Off, Len]` ("String
+  views" above); equality kind `"s"` for strings.
+
 - IR 2 (stage 2 close): `struct` types may carry `methods`/`ptrMethods`
   (unnamed structs with embedded fields); builtin `deferstack`; `defer`
   takes an optional `stack` operand (range-over-func bodies).
@@ -185,7 +188,7 @@ Code lives in `src/types/` (type-level `.ts` modules, generated tables as
 | bool                                                     | `true` / `false`                                                                                                                                                                                                                                                                                                                                                                                                              |
 | every integer width, signed or unsigned                  | lua-in-types' int64 nibble string (lowercase hex, least significant nibble first, shortest two's complement that sign-extends; `0`→`"0"`, `-1`→`"f"`, `8`→`"80"`) of the value's **w-bit pattern sign-extended to 64 bits**. So uint8 255 is `"f"`, uint64 max is `"f"`, int16 -2 is `"e"`. Every value of every width has one canonical form; signedness and width live in the op, which the emitter picks from the IR type. |
 | float32/64                                               | the bit pattern as the matching unsigned integer (above)                                                                                                                                                                                                                                                                                                                                                                      |
-| string                                                   | a string literal of bytes (chars 0..255), indexed with a `Chars`-style trie for long strings                                                                                                                                                                                                                                                                                                                                  |
+| string                                                   | a string literal of bytes (chars 0..255), indexed with a `Chars`-style trie for long strings; or, for 128 bytes or more, a view `[Base, Off, Len]` (below)                                                                                                                                                                                                                                                                    |
 | nil (any kind)                                           | `null`                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | pointer, slice, map, chan, func, interface, struct/array | pointer `[Id, Slot]`; slice `[Id, Off, Len, Cap]`; interface `[T, V]`; func `[F, Env]`; struct/array in registers: tuple of slots; map: an object on the heap (`map.ts`); ids, objects, globals, panics: "Heap encodings" below and `src/types/heap.ts`                                                                                                                                                                       |
 
@@ -196,6 +199,28 @@ the reference interpreter's own functions (`src/ref/values.ts` etc.) and,
 if it touches the heap, the H5 cost test at 0, 1k, 10k, 100k live objects.
 Run tsrs benchmarks and gates through `scripts/heavy.sh` (two machine-wide
 slots).
+
+#### String views (strview)
+
+- A Go string is a literal or, when it has at least VMIN = 128 bytes, a
+  view `[Base, Off, Len]`: the bytes `Base[Off : Off+Len]` of the string
+  literal `Base` (Off, Len ints, Len >= VMIN, Off + Len <= len(Base)).
+  One Go string has several type-level forms; the reference value is the
+  bytes. The codec writes literals and reads both (`codec-str.ts`
+  `strFromType`, `viewToType`).
+- Slicing a string of VMIN bytes or more gives a view when the result has
+  VMIN bytes or more (a view of a view is a view of the same base; the
+  whole string is the string itself), else a literal. Nothing else makes
+  views: concatenation, conversions and the bytealg results are literals.
+- Every op in `str.ts` takes both forms. `Lit<S>` is the literal (memoized
+  per view); it is used for concatenation, map keys (the canonical key of a
+  string is its literal), conversions to bytes and runes, the bytealg
+  searches, comparisons of long strings with different views, `switch`
+  cases of VMIN bytes or more, and printing. Short strings are always
+  literals, so `==`, `+` and map keys on them stay a check or two dearer
+  than before.
+- String equality is never type identity: `==` on strings is `Sr.Eq`, and
+  the equality kind of a string slot (`Hp.Eq`, the `eqk` table) is `"s"`.
 
 #### Heap encodings (stage4-heap)
 

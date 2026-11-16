@@ -976,6 +976,7 @@ export function eqKind(ti: TypeInfo, t: number): string {
     const k = T.info[s]!;
     if (k.k === "float") return lit(k.fbits === 32 ? "f32" : "f64");
     if (k.k === "interface") return lit("i");
+    if (k.k === "string") return lit("s");
     return lit("=");
   };
   if (T.info[t]!.agg) return `[${ti.slotTypes(t).map(one).join(", ")}]`;

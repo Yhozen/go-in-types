@@ -7,7 +7,7 @@ import { GoMap, MapIter } from "../src/ref/gomap.ts";
 import { decodeRune, encodeRune, roundupsize } from "../src/ref/values.ts";
 import { mapStateToType } from "../src/types/codec-map.ts";
 import { strHash } from "../src/types/hash-spec.ts";
-import { strToType as lit } from "../src/types/codec-str.ts";
+import { strToType as lit, VMIN } from "../src/types/codec-str.ts";
 import { encodeInt64 } from "../src/types/codec-int.ts";
 import { mapTablesSource, strTablesSource } from "./gen-str-tables.ts";
 
@@ -42,16 +42,21 @@ function goIndex(s: string, i: bigint): string {
   if (i >= BigInt(s.length)) return panic(`index out of range [${i}] with length ${s.length}`);
   return int(BigInt.asIntN(8, BigInt(s.charCodeAt(Number(i)))));
 }
-function goSlice(s: string, l: bigint | null, h: bigint | null): string {
+function goSliceStr(s: string, l: bigint | null, h: bigint | null): string | { panic: string } {
   const n = BigInt(s.length);
   const hh = h ?? n;
   const ll = l ?? 0n;
-  if (hh < 0n) return panic(`slice bounds out of range [:${hh}]`);
-  if (hh > n) return panic(`slice bounds out of range [:${hh}] with length ${n}`);
-  if (ll < 0n) return panic(`slice bounds out of range [${ll}:]`);
-  if (ll > hh) return panic(`slice bounds out of range [${ll}:${hh}]`);
-  return lit(s.substring(Number(ll), Number(hh)));
+  const p = (m: string) => ({ panic: panic(m) });
+  if (hh < 0n) return p(`slice bounds out of range [:${hh}]`);
+  if (hh > n) return p(`slice bounds out of range [:${hh}] with length ${n}`);
+  if (ll < 0n) return p(`slice bounds out of range [${ll}:]`);
+  if (ll > hh) return p(`slice bounds out of range [${ll}:${hh}]`);
+  return s.substring(Number(ll), Number(hh));
 }
+/** Whether str.ts gives a view for s[l:h] (in range): 128+ bytes, not the whole string. */
+const isView = (s: string, l: bigint | null, h: bigint | null) =>
+  Number((h ?? BigInt(s.length)) - (l ?? 0n)) >= VMIN &&
+  !((l ?? 0n) === 0n && (h ?? BigInt(s.length)) === BigInt(s.length));
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 function runes(s: string): number[] {
   const rs: number[] = [];
@@ -73,6 +78,7 @@ function strTests(): string {
     "// Expected values: src/ref/values.ts (UTF-8) and JavaScript byte-string semantics.",
     'import type * as S from "../../src/types/str.ts";',
     'import type * as H from "../../src/types/heap.ts";',
+    'import type * as M from "../../src/types/map.ts";',
     "",
     "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;",
     "type Assert<T extends true> = T;",
@@ -87,6 +93,14 @@ function strTests(): string {
   const longs: string[] = [text(300), text(4000), bytes(5000), text(20000)];
   longs.forEach((s, i) => out.push(`export type L${i} = ${lit(s)};`));
   const L = (i: number) => `L${i}`;
+
+  // A slice: the panic, or (128+ bytes of a longer string: a view) its literal and form.
+  const slCheck = (e: string, s: string, l: bigint | null, h: bigint | null) => {
+    const r = goSliceStr(s, l, h);
+    if (typeof r !== "string") return check(e, r.panic);
+    check(`S.Lit<${e}>`, lit(r));
+    check(`S.IsView<${e}>`, String(isView(s, l, h)));
+  };
 
   // ---- len
   const lens = [0, 1, 2, 7, 8, 15, 16, 17, 31, 127, 128, 255, 256, 257, 4095, 4096, 4097];
@@ -129,11 +143,8 @@ function strTests(): string {
     for (const v of [0n, 5n, 299n, 300n, (1n << BigInt(w)) - 1n, 1n << BigInt(w - 1)]) {
       const u = BigInt.asUintN(w, v);
       check(`S.Index<${lit(s)}, ${int(BigInt.asIntN(w, u))}, "${k}">`, goIndex(s, u));
-      check(`S.Slice<${lit(s)}, ${int(BigInt.asIntN(w, u))}, null, "${k}">`, goSlice(s, u, null));
-      check(
-        `S.Slice<${lit(s)}, null, ${int(BigInt.asIntN(w, u))}, "i64", "${k}">`,
-        goSlice(s, null, u),
-      );
+      slCheck(`S.Slice<${lit(s)}, ${int(BigInt.asIntN(w, u))}, null, "${k}">`, s, u, null);
+      slCheck(`S.Slice<${lit(s)}, null, ${int(BigInt.asIntN(w, u))}, "i64", "${k}">`, s, null, u);
     }
   }
   longs.forEach((s, li) => {
@@ -154,9 +165,11 @@ function strTests(): string {
 
   // ---- slice
   const sl = (s: string, ref: string, l: bigint | null, h: bigint | null) =>
-    check(
+    slCheck(
       `S.Slice<${ref}, ${l === null ? "null" : int(l)}, ${h === null ? "null" : int(h)}>`,
-      goSlice(s, l, h),
+      s,
+      l,
+      h,
     );
   for (const s of [
     "",
@@ -456,8 +469,162 @@ function strTests(): string {
     check(`S.BIndexByte<${h}, ${av}, ${cT}>`, int(a.indexOf(String.fromCharCode(c))));
   });
 
+  viewTests(out, check);
+
   out.push("", ...lines, "");
   return out.join("\n");
+}
+
+/**
+ * Views (str.ts): every op on views of long strings, views of views, and
+ * views compared with literals and with views of other bases. Own PRNG, so
+ * the other tests keep their inputs.
+ */
+function viewTests(out: string[], check: (actual: string, expected: string) => void) {
+  const r = rng(777);
+  const vi = (n: number) => Math.floor(r() * n);
+  const vbytes = (n: number, alpha = 256) =>
+    Array.from({ length: n }, () => String.fromCharCode(vi(alpha))).join("");
+  const utf = (n: number) => {
+    let s = "";
+    while (s.length < n) s += vi(3) ? encodeRune(vi(0x110000)) : vbytes(1, 128);
+    return s;
+  };
+  const bases = [vbytes(3000), utf(2000), "abcd".repeat(300), vbytes(700, 4)];
+  bases.forEach((b, i) => out.push(`export type VB${i} = ${lit(b)};`));
+  let nv = 0;
+  /** A view of base bi at [a, a+n) (n >= 128), by slicing. */
+  const view = (bi: number, a: number, n: number): [string, string] => {
+    const name = `VV${nv++}`;
+    out.push(`export type ${name} = S.Slice<VB${bi}, ${int(a)}, ${int(a + n)}>;`);
+    check(`S.IsView<${name}>`, "true");
+    return [name, bases[bi]!.slice(a, a + n)];
+  };
+  const views: [string, string][] = [];
+  bases.forEach((b, bi) => {
+    views.push(view(bi, 0, 128));
+    views.push(view(bi, b.length - 128, 128));
+    views.push(view(bi, 1, b.length - 1));
+    for (let k = 0; k < 3; k++) {
+      const n = 128 + vi(b.length - 128);
+      views.push(view(bi, vi(b.length - n + 1), n));
+    }
+  });
+  // views of views: slice each view again (long and short results)
+  const nested: [string, string][] = [];
+  for (const [v, s] of views.slice()) {
+    const n = s.length;
+    const cuts: [number, number][] = [
+      [0, n],
+      [1, n],
+      [0, 128],
+      [n - 128, n],
+      [5, 20],
+      [n - 1, n],
+      [0, 0],
+    ];
+    if (n > 130) cuts.push([2, n - 1]);
+    for (let k = 0; k < 3; k++) {
+      const a = vi(n + 1);
+      cuts.push([a, a + vi(n - a + 1)]);
+    }
+    for (const [a, h] of cuts) {
+      const e = `S.Slice<${v}, ${int(a)}, ${int(h)}>`;
+      check(`S.Lit<${e}>`, lit(s.slice(a, h)));
+      // the whole view is the view itself
+      check(`S.IsView<${e}>`, String(h - a >= VMIN));
+      check(`S.Len<${e}>`, int(h - a));
+      if (h - a >= VMIN && !(a === 0 && h === n)) {
+        const name = `VW${nested.length}`;
+        out.push(`export type ${name} = ${e};`);
+        nested.push([name, s.slice(a, h)]);
+      }
+    }
+    // bounds panics, as on a literal
+    for (const [a, h] of [
+      [0n, BigInt(n) + 1n],
+      [5n, 4n],
+      [-1n, 3n],
+    ] as const)
+      check(
+        `S.Slice<${v}, ${int(a)}, ${int(h)}>`,
+        (goSliceStr(s, a, h) as { panic: string }).panic,
+      );
+    check(`S.Lit<S.Slice<${v}, ${int(3)}, null>>`, lit(s.slice(3)));
+    check(`S.Lit<S.Slice<${v}, null, ${int(n - 3)}>>`, lit(s.slice(0, n - 3)));
+  }
+  // a view of a view of a view
+  if (nested.length) {
+    const [v, s] = nested[0]!;
+    const e = `S.Slice<S.Slice<${v}, "1", null>, "1", null>`;
+    check(`S.Lit<${e}>`, lit(s.slice(2)));
+    check(`S.Index<${e}, "0">`, int(BigInt.asIntN(8, BigInt(s.charCodeAt(2)))));
+  }
+  for (const [v, s] of [...views, ...nested]) {
+    const n = s.length;
+    check(`S.Len<${v}>`, int(n));
+    check(`S.Lit<${v}>`, lit(s));
+    for (const i of [0n, BigInt(n - 1), BigInt(n), -1n, BigInt(vi(n)), BigInt(vi(n))])
+      check(`S.Index<${v}, ${int(i)}>`, goIndex(s, i));
+    // range: every offset near both ends and a few inside
+    const offs = new Set([0, 1, 2, 3, n - 4, n - 3, n - 2, n - 1, n, vi(n), vi(n)]);
+    for (const i of offs) {
+      if (i < 0) continue;
+      if (i >= n) {
+        check(`S.Next<${v}, ${int(i)}>`, `[false, "0", "0", ${int(i)}]`);
+        continue;
+      }
+      const [rr, w] = decodeRune(s, i);
+      check(`S.Next<${v}, ${int(i)}>`, `[true, ${int(i)}, ${int(rr)}, ${int(i + w)}]`);
+    }
+    // equality and order against literals and views
+    const other = s.slice(0, n - 1) + String.fromCharCode((s.charCodeAt(n - 1) + 1) % 256);
+    for (const t of [s, other, s.slice(0, n - 1), s + "x", "short"]) {
+      check(`S.Eq<${v}, ${lit(t)}>`, String(s === t));
+      check(`S.Eq<${lit(t)}, ${v}>`, String(s === t));
+      check(`S.Ne<${v}, ${lit(t)}>`, String(s !== t));
+      check(`S.Compare<${v}, ${lit(t)}>`, int(cmp(s, t)));
+      check(`S.Compare<${lit(t)}, ${v}>`, int(cmp(t, s)));
+      check(`H.Eq<${v}, ${lit(t)}, "s", {}>`, String(s === t));
+    }
+    check(`S.Eq<${v}, ${v}>`, "true");
+    check(`S.Concat<${v}, "!">`, lit(s + "!"));
+    check(`S.Concat<"!", ${v}>`, lit("!" + s));
+    check(`S.Concat<${v}, ${v}>`, lit(s + s));
+    check(`M.KeyStr<${v}>`, lit(`${encInt(n)}:${s}`));
+    const c = s.charCodeAt(vi(n));
+    const cT = int(BigInt.asIntN(8, BigInt(c)));
+    check(`S.IndexByte<${v}, ${cT}>`, int(s.indexOf(String.fromCharCode(c))));
+    check(`S.CountByte<${v}, ${cT}>`, int(s.split(String.fromCharCode(c)).length - 1));
+    const a = vi(n - 4);
+    check(`S.IndexStr<${v}, ${lit(s.slice(a, a + 3))}>`, int(s.indexOf(s.slice(a, a + 3))));
+    if (n <= 400) {
+      check(
+        `S.Codes<${v}>`,
+        `[${s
+          .split("")
+          .map((ch) => int(BigInt.asIntN(8, BigInt(ch.charCodeAt(0)))))
+          .join(", ")}]`,
+      );
+      check(`S.RunesCnt<${v}>`, int(runes(s).length));
+      check(`S.Runes<${v}>`, `[${runes(s).map(int).join(", ")}]`);
+      check(
+        `S.BytesToStr<S.StrToBytes<H.HeapEmpty, ${v}>, S.StrToBytesV<H.HeapEmpty, ${v}>>`,
+        lit(s),
+      );
+    }
+  }
+  // views of different bases (or offsets) with the same bytes
+  const rep = bases[2]!;
+  const pairs: [string, string, boolean][] = [
+    [`S.Slice<VB2, "0", "002">`, `S.Slice<VB2, "4", "402">`, true],
+    [`S.Slice<VB2, "0", "002">`, `S.Slice<VB2, "1", "102">`, false],
+    [`S.Slice<VB2, "0", "002">`, `S.Slice<VB2, "0", "102">`, false],
+  ];
+  for (const [x, y, eq] of pairs) {
+    check(`S.Eq<${x}, ${y}>`, String(eq));
+    check(`S.Eq<${x}, ${lit(rep.slice(0, 32 * 16))}>`, "true");
+  }
 }
 
 // ---------------------------------------------------------------- map tests

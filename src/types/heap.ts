@@ -76,7 +76,8 @@
 // (linear: whole subtrees and leaves at once). Limits: the heap holds 16^W
 // objects; a lazy object 16^6 slots; loops restart every 256 steps outside
 // tail position (depth limit: ~25k steps per op); a bulk store of more than
-// 4096 slots goes slot by slot (quadratic).
+// 4096 slots from a register tuple goes slot by slot (quadratic); a bulk
+// heap-to-heap copy goes in pieces of 4096.
 import type {
   Ch,
   E0,
@@ -657,12 +658,25 @@ type CopyBulk<O, Src, Cnt extends string> = O["length" & keyof O] extends 19
 /**
  * Bulk copy: the source range read raw (unwritten slots stay unwritten:
  * memory is typed, so both objects share the zero pattern), then stored;
- * reading first makes it a memmove.
+ * reading first makes it a memmove. Ranges of more than 4096 slots go in
+ * pieces of 4096 (a bulk store's limit; a tuple holds at most 9,999), all
+ * read from Src, the source object as it was before the copy, so the
+ * order of the pieces does not matter.
  */
-type CopyRaw<O, Src, SOff extends string, DOff extends string, Cnt extends string> = StoreKO<
-  O,
-  DOff,
-  RangeR<Src, LPath<SOff, Src["16" & keyof Src]>, LPath<Add<SOff, Dec<Cnt>>, Src["16" & keyof Src]>>
+type CopyRaw<O, Src, SOff extends string, DOff extends string, Cnt extends string> =
+  Le<Cnt, "0001"> extends true
+    ? StoreKO<O, DOff, CopyRange<Src, SOff, Cnt>>
+    : CopyRaw<
+        StoreKO<O, DOff, CopyRange<Src, SOff, "0001">>,
+        Src,
+        Add<SOff, "0001">,
+        Add<DOff, "0001">,
+        Sub<Cnt, "0001">
+      >;
+type CopyRange<Src, SOff extends string, Cnt extends string> = RangeR<
+  Src,
+  LPath<SOff, Src["16" & keyof Src]>,
+  LPath<Add<SOff, Dec<Cnt>>, Src["16" & keyof Src]>
 >;
 type CopyInH<H, DstId, DstOff extends string, SId, SOff extends string, Cnt extends string, Ze> = [
   SId,

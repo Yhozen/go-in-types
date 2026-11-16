@@ -1,5 +1,6 @@
 // Bulk loads, stores and copies (heap.ts LoadK / StoreK / Copy of 32 slots
-// or more in a lazy object): random lazy objects of 17..5000 slots, partly written,
+// or more in a lazy object): random lazy objects of 17..5000 slots (and
+// copies of up to 9,000 slots in objects of 12,000), partly written,
 // read and written at random offsets and lengths; every result must equal
 // the slot-by-slot model computed here.
 import { expect, test } from "vite-plus/test";
@@ -19,14 +20,19 @@ function rng(seed: number) {
   };
 }
 
-function buildCases(seed: number, count: number) {
+function buildCases(
+  seed: number,
+  count: number,
+  sizes = [17, 40, 256, 300, 1000, 1500, 4096, 5000],
+  copies = [40, 300, 3000],
+) {
   const rnd = rng(seed);
   const lines: string[] = [];
   const cases: Case[] = [];
   let nm = 0;
   for (let c = 0; c < count; c++) {
     const p = `b${seed}_${c}`;
-    const M = [17, 40, 256, 300, 1000, 1500, 4096, 5000][rnd(8)]!;
+    const M = sizes[rnd(sizes.length)]!;
     const depth = M <= 256 ? 2 : M <= 4096 ? 3 : 4;
     const P = 1 + rnd(3); // zero pattern period
     const dens = rnd(3);
@@ -73,7 +79,7 @@ function buildCases(seed: number, count: number) {
       expected: tup(r1.map((s) => (s >= w0 && s < w0 + w ? vals[s - w0]! : (slots[s] ?? z(s))))),
     });
     // copy (memmove) within the object, both directions, and from a second object
-    const cn = 1 + rnd(Math.min(M, [40, 300, 3000][rnd(3)]!));
+    const cn = 1 + rnd(Math.min(M, copies[rnd(copies.length)]!));
     const cs = rnd(M - cn + 1);
     const cd = rnd(M - cn + 1);
     const other = rnd(2) === 1;
@@ -107,4 +113,17 @@ test("bulk LoadK / StoreK / Copy agree with the slot-by-slot model", () => {
     expect(res.other).toEqual([]);
     expect(res.failures).toEqual([]);
   }
+}, 600_000);
+
+test("bulk copies of more than 4096 slots (in pieces) agree with the model", () => {
+  const header = [
+    `import type * as H from "../../src/types/heap.ts";`,
+    importLine(["Mk16", "Mk19", "E1", "E2", "E3"], "heap.gen.ts"),
+  ].join("\n");
+  const { lines, cases } = buildCases(7, 4, [12000], [9000]);
+  const big = cases.filter((c) => /copy/.test(c.name));
+  expect(big.some((c) => Number(/n=(\d+)/.exec(c.name.split("copy")[1]!)![1]) > 4096)).toBe(true);
+  const res = runCases("heap-bulk-big.ts", header + "\n" + lines.join("\n"), cases);
+  expect(res.other).toEqual([]);
+  expect(res.failures).toEqual([]);
 }, 600_000);

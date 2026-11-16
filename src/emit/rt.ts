@@ -10,8 +10,12 @@ export type St<Tag, Key, H, K, X, A, F> = Tag extends unknown ? [Tag, Key, H, K,
 export type Ct<Kind, Key, Regs, D, Fid, Mode> = Kind extends unknown
   ? [Kind, Key, Regs, D, Fid, Mode]
   : never;
-/** T with V appended (the emitter's tuple constructor, emit.ts `tup`). */
-export type TPush<T, V> = T extends unknown[] ? [...T, V] : never;
+/**
+ * T with V appended (the emitter's tuple constructor, emit.ts `tup`). Not a
+ * conditional: resolving `T extends unknown[]` on a register tuple cost
+ * ~50x more per call in tsgo's structuredTypeRelatedToWorker (EMIT.md).
+ */
+export type TPush<T extends unknown[], V> = [...T, V];
 /** A cons cell (stack, defer list, panic chain). */
 export type Cons<A, B> = A extends unknown ? [A, B] : never;
 /** Machine extras: stdout, stderr, panic chain, next panic serial. */

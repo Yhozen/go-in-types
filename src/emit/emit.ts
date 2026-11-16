@@ -750,7 +750,8 @@ class FuncEmitter {
  * names a type alias (H4): its elements are resolved only when read, under
  * the mapper of the segment that built it. Values that outlive a step (call
  * arguments, saved registers, defer records, results) must not be such
- * tuples, so those are built with `R.TPush` (a constructor) instead.
+ * tuples, so those are built with `R.TPush` (a spread, not a conditional)
+ * instead.
  */
 export function tup(els: string[]): string {
   if (els.every((e) => !ALIAS_REF.test(e))) return `[${els.join(", ")}]`;

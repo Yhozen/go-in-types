@@ -228,6 +228,11 @@ moves, `A` holding the live values); the default jumps on.
   registers, results) are built with `R.TPush`: tsrs defers a tuple
   literal with such elements (H4), and a deferred tuple kept in K made
   later steps fail with TS2589 depth (gotest/range4).
+- `R.TPush<T, V>` is `[...T, V]` (T constrained to `unknown[]`), not the
+  conditional `T extends unknown[] ? [...T, V] : never`: with the
+  conditional, a tsgo call site saving 13 registers (structuredTypeRelatedToWorker
+  in ts-in-types' intersectionApparentTypeCaching) cost ~5M instantiations
+  per chunk instead of ~106k.
 
 - `X` is `Xt<Out, Err, Pn, Ns>` (4 fields; `Ns` the next panic serial);
   panic records carry the serial and the printed text; the `"p"` frame is

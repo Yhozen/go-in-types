@@ -204,6 +204,13 @@ const strOps: Record<string, { tab?: (i: number) => string; e: string }> = {
   indexLong: { tab: (i) => int((i * 197) % 20000), e: `S.Index<L, X>` },
   sliceLong: { tab: (i) => int((i * 197) % 19000), e: `S.Slice<L, X, AddT<X>>` },
   sliceShort: { tab: (i) => strToType(key(i)), e: `S.Slice<X, "2", "6">` },
+  suffixLong: { tab: (i) => int((i * 197) % 19000), e: `S.Slice<L, X, null>` },
+  suffixIndex: { tab: (i) => int((i * 197) % 19000), e: `S.Index<S.Slice<L, X, null>, "5">` },
+  suffixSuffix: {
+    tab: (i) => int((i * 197) % 19000),
+    e: `S.Index<S.Slice<S.Slice<L, X, null>, "7", null>, "3">`,
+  },
+  indexView: { tab: (i) => int((i * 197) % 19000), e: `S.Index<V, X>` },
   compare: { tab: (i) => strToType(key(i)), e: `S.Compare<X, "id_5000_abcd">` },
   eq: { tab: (i) => strToType(key(i)), e: `S.Eq<X, "id_5000_abcd">` },
   concat: { tab: (i) => strToType(key(i)), e: `S.Concat<X, "_suffix">` },
@@ -224,8 +231,9 @@ function generateStr(op: string, k: number): string {
   w(`export {};`);
   w(`type L = ${strToType(LONG)};`);
   w(`type MB = ${strToType(MB)};`);
+  w(`type V = S.Slice<L, "3", null>;`);
   // warm the long strings' indexes outside the loop (the first access builds them)
-  w(`export type Warm = [S.Index<L, "0">, S.Index<MB, "0">];`);
+  w(`export type Warm = [S.Index<L, "0">, S.Index<MB, "0">, S.Index<V, "0">];`);
   const tok = (i: number) => (i >= k ? "end" : `s${i}`);
   w(
     `interface Seq { ${range(k)
